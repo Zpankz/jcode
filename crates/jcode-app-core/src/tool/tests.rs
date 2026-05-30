@@ -55,6 +55,19 @@ async fn test_tool_definitions_are_sorted() {
     );
 }
 
+#[tokio::test]
+async fn native_external_cli_tools_are_registered() {
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider).await;
+    let names = registry.tool_names().await;
+    for expected in ["memex", "rtk", "context_mode", "caveman"] {
+        assert!(
+            names.iter().any(|n| n == expected),
+            "expected native tool '{expected}' to be registered; have: {names:?}"
+        );
+    }
+}
+
 #[test]
 fn test_resolve_skill_aliases_to_skill_manage() {
     assert_eq!(Registry::resolve_tool_name("skill"), "skill_manage");

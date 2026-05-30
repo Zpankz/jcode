@@ -5,11 +5,14 @@ mod bash;
 mod batch;
 mod bg;
 mod browser;
+mod caveman;
 mod codesearch;
 mod communicate;
+mod context_mode;
 mod conversation_search;
 mod debug_socket;
 mod edit;
+mod external_cli;
 mod glob;
 mod gmail;
 mod goal;
@@ -18,11 +21,13 @@ mod invalid;
 mod ls;
 mod lsp;
 pub mod mcp;
+mod memex;
 mod memory;
 mod multiedit;
 mod open;
 mod patch;
 mod read;
+mod rtk;
 pub mod selfdev;
 mod session_search;
 mod side_panel;
@@ -232,6 +237,15 @@ impl Registry {
                 goal::InitiativeTool::new,
             );
             Self::insert_tool_timed(&mut m, &mut timings, "gmail", gmail::GmailTool::new);
+            Self::insert_tool_timed(&mut m, &mut timings, "memex", memex::MemexTool::new);
+            Self::insert_tool_timed(&mut m, &mut timings, "rtk", rtk::RtkTool::new);
+            Self::insert_tool_timed(
+                &mut m,
+                &mut timings,
+                "context_mode",
+                context_mode::ContextModeTool::new,
+            );
+            Self::insert_tool_timed(&mut m, &mut timings, "caveman", caveman::CavemanTool::new);
             Self::insert_tool_timed(&mut m, &mut timings, "schedule", ambient::ScheduleTool::new);
             Self::insert_tool_timed(&mut m, &mut timings, "selfdev", selfdev::SelfDevTool::new);
             let nonzero: Vec<String> = timings
