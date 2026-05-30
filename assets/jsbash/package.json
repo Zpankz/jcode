@@ -1,0 +1,10 @@
+{
+  "name": "jcode-jsbash-sidecar",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Node sidecar bridging jcode's native jsbash tool to the just-bash virtual sandbox.",
+  "dependencies": {
+    "just-bash": "3.0.1"
+  }
+}

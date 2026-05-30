@@ -5,3 +5,8 @@ ios_simulator_screenshot.png
 /.wrangler/
 /tmp/
 /.jcode/generated-images/
+
+# jsbash sidecar deps (installed on demand)
+assets/jsbash/node_modules/
+assets/jsbash/package-lock.json
+assets/jsbash/pnpm-lock.yaml

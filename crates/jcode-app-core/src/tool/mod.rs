@@ -19,6 +19,7 @@ mod grep;
 pub mod hooks;
 mod integration_support;
 mod invalid;
+mod jsbash;
 mod ls;
 mod lsp;
 pub mod mcp;
@@ -281,6 +282,7 @@ impl Registry {
             );
             Self::insert_tool_timed(&mut m, &mut timings, "rtk", rtk::RtkTool::new);
             Self::insert_tool_timed(&mut m, &mut timings, "caveman", caveman::CavemanTool::new);
+            Self::insert_tool_timed(&mut m, &mut timings, "jsbash", jsbash::JsBashTool::new);
             Self::insert_tool_timed(&mut m, &mut timings, "schedule", ambient::ScheduleTool::new);
             Self::insert_tool_timed(&mut m, &mut timings, "selfdev", selfdev::SelfDevTool::new);
             let nonzero: Vec<String> = timings
