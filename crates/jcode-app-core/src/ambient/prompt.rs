@@ -2,6 +2,9 @@ use chrono::{DateTime, Utc};
 
 use super::{AmbientState, Priority, ScheduleTarget, ScheduledItem, take_pending_directives};
 
+const DUPLICATE_CANDIDATE_THRESHOLD: f32 = 0.95;
+const MAX_DUPLICATE_SCAN_MEMORIES: usize = 1_000;
+
 // ---------------------------------------------------------------------------
 // Ambient System Prompt Builder
 // ---------------------------------------------------------------------------
@@ -44,6 +47,7 @@ pub fn gather_memory_graph_health(
     memory_manager: &crate::memory::MemoryManager,
 ) -> MemoryGraphHealth {
     let mut health = MemoryGraphHealth::default();
+    let mut embedded_active_memories: Vec<(String, Vec<f32>)> = Vec::new();
 
     // Accumulate stats from project + global graphs
     for graph in [
@@ -73,6 +77,15 @@ pub fn gather_memory_graph_health(
             .filter(|m| m.active && m.embedding.is_none())
             .count();
 
+        for memory in graph.memories.values().filter(|m| m.active) {
+            if embedded_active_memories.len() >= MAX_DUPLICATE_SCAN_MEMORIES {
+                break;
+            }
+            if let Some(embedding) = &memory.embedding {
+                embedded_active_memories.push((memory.id.clone(), embedding.clone()));
+            }
+        }
+
         // Count contradiction edges
         for edges in graph.edges.values() {
             for edge in edges {
@@ -95,11 +108,30 @@ pub fn gather_memory_graph_health(
     // Contradicts edges are bidirectional, so divide by 2
     health.contradictions /= 2;
 
-    // Duplicate candidates would require embedding similarity scan;
-    // placeholder for now — ambient agent will discover them during its cycle.
-    health.duplicate_candidates = 0;
+    health.duplicate_candidates = count_duplicate_candidates(&embedded_active_memories);
 
     health
+}
+
+fn count_duplicate_candidates(embedded_memories: &[(String, Vec<f32>)]) -> usize {
+    let scan_len = embedded_memories.len().min(MAX_DUPLICATE_SCAN_MEMORIES);
+    let mut duplicate_pairs = 0usize;
+
+    for i in 0..scan_len {
+        let (left_id, left_embedding) = &embedded_memories[i];
+        for (right_id, right_embedding) in embedded_memories.iter().take(scan_len).skip(i + 1) {
+            if left_id == right_id {
+                continue;
+            }
+            if crate::embedding::cosine_similarity(left_embedding, right_embedding)
+                >= DUPLICATE_CANDIDATE_THRESHOLD
+            {
+                duplicate_pairs += 1;
+            }
+        }
+    }
+
+    duplicate_pairs
 }
 
 /// Gather feedback memories relevant to ambient mode.
@@ -541,5 +573,31 @@ pub fn format_minutes_human(mins: u32) -> String {
         } else {
             format!("{}d", d)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::count_duplicate_candidates;
+
+    #[test]
+    fn duplicate_candidate_scan_counts_high_similarity_pairs() {
+        let embedded_memories = vec![
+            ("mem_a".to_string(), vec![1.0, 0.0, 0.0]),
+            ("mem_b".to_string(), vec![0.999, 0.001, 0.0]),
+            ("mem_c".to_string(), vec![0.0, 1.0, 0.0]),
+        ];
+
+        assert_eq!(count_duplicate_candidates(&embedded_memories), 1);
+    }
+
+    #[test]
+    fn duplicate_candidate_scan_skips_same_memory_id() {
+        let embedded_memories = vec![
+            ("mem_same".to_string(), vec![1.0, 0.0]),
+            ("mem_same".to_string(), vec![1.0, 0.0]),
+        ];
+
+        assert_eq!(count_duplicate_candidates(&embedded_memories), 0);
     }
 }

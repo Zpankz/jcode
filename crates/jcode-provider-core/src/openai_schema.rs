@@ -167,6 +167,14 @@ pub fn openai_compatible_schema(schema: &Value) -> Value {
         Value::Object(map) => {
             let mut out = serde_json::Map::new();
             for (key, value) in map {
+                // OpenAI-compatible function schemas accept only a subset of JSON Schema.
+                // In particular, providers reject annotations such as `format: "uri"`
+                // from MCP tool schemas (for example PageIndex's `url` parameter).
+                // Drop string-valued `format` annotations while preserving any property
+                // literally named `format` (that child value is a schema object, not a string).
+                if key == "format" && value.is_string() {
+                    continue;
+                }
                 let normalized_key = if key == "oneOf" { "anyOf" } else { key };
                 out.insert(normalized_key.to_string(), openai_compatible_schema(value));
             }
@@ -502,5 +510,30 @@ mod tests {
             json!("integer")
         );
         assert_eq!(normalized["required"], json!(["file_path"]));
+    }
+
+    #[test]
+    fn openai_compatible_schema_drops_format_annotations() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "Document URL"
+                },
+                "format": {
+                    "type": "string",
+                    "enum": ["markdown", "json"]
+                }
+            },
+            "required": ["url"]
+        });
+
+        let normalized = openai_compatible_schema(&schema);
+
+        assert!(normalized["properties"]["url"].get("format").is_none());
+        assert_eq!(normalized["properties"]["url"]["type"], json!("string"));
+        assert_eq!(normalized["properties"]["format"]["type"], json!("string"));
     }
 }
