@@ -134,7 +134,12 @@ impl Registry {
         HOOKS
             .get_or_init(|| {
                 let mut registry = hooks::HookRegistry::new();
-                // Native hooks (e.g. RtkRewriteHook) are registered here in P3.
+                // Native hooks first. RtkRewriteHook transparently rewrites
+                // safe `bash` commands to their `rtk` equivalents when rtk
+                // integration is enabled and the binary is available.
+                if let Some(rtk_hook) = hooks::RtkRewriteHook::new_if_enabled() {
+                    registry.register_native(Arc::new(rtk_hook));
+                }
                 registry.load_global_command_hooks();
                 Arc::new(registry)
             })

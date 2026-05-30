@@ -29,10 +29,12 @@ use std::time::Duration;
 mod command_hook;
 mod config;
 mod matcher;
+mod rtk_rewrite;
 
 pub use command_hook::CommandHook;
 pub use config::{HookConfig, HookConfigEntry};
 pub use matcher::HookMatcher;
+pub use rtk_rewrite::{RtkRewriteHook, rewrite_bash_command};
 
 /// Input to a `PreToolUse` hook.
 pub struct PreToolUseInput<'a> {

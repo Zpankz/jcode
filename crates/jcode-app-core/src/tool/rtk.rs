@@ -99,8 +99,14 @@ fn manifest_path() -> Result<PathBuf> {
     Ok(support::jcode_dir()?.join("rtk").join("manifest.json"))
 }
 
+/// True when rtk integration has been set up (manifest present). Used by the
+/// PreToolUse rewrite hook to decide whether to activate.
+pub(crate) fn integration_enabled() -> bool {
+    manifest_path().map(|p| p.exists()).unwrap_or(false)
+}
+
 /// Probe for the rtk binary. Returns (path, version) when found.
-fn detect_rtk() -> Option<(PathBuf, Option<String>)> {
+pub(crate) fn detect_rtk() -> Option<(PathBuf, Option<String>)> {
     // `which`-style resolution via the OS, but avoid a hard `which` dependency.
     let exe = if cfg!(windows) { "rtk.exe" } else { "rtk" };
     let path = std::env::var_os("PATH").and_then(|paths| {

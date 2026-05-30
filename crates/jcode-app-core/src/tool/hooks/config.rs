@@ -96,15 +96,15 @@ impl HookConfigEntry {
 
 /// Expand a leading `~` to the user's home directory.
 fn expand_tilde(path: &str) -> std::path::PathBuf {
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(home) = home_dir() {
-            return home.join(rest);
-        }
+    if let Some(rest) = path.strip_prefix("~/")
+        && let Some(home) = home_dir()
+    {
+        return home.join(rest);
     }
-    if path == "~" {
-        if let Some(home) = home_dir() {
-            return home;
-        }
+    if path == "~"
+        && let Some(home) = home_dir()
+    {
+        return home;
     }
     std::path::PathBuf::from(path)
 }
