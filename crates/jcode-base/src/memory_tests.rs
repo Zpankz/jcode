@@ -700,3 +700,35 @@ fn garden_dry_run_reports_candidates_without_mutating_graph() {
         }));
     });
 }
+
+#[test]
+fn garden_dry_run_is_deterministic_under_large_pairwise_set() {
+    with_temp_home(|_home| {
+        let manager = MemoryManager::new().with_project_dir("/tmp/jcode-garden-budget-test");
+
+        // Insert well above MAX_PAIRWISE_MEMORIES (256) active embedded memories.
+        // Two clusters of near-identical embeddings guarantee dedup candidates,
+        // and the run must remain bounded and deterministic across invocations.
+        for i in 0..400u32 {
+            let mut entry = MemoryEntry::new(MemoryCategory::Fact, format!("memory {i}"));
+            entry.id = format!("mem:{i:04}");
+            let bucket = (i % 2) as f32;
+            entry.embedding = Some(vec![1.0 - bucket, bucket, 0.0]);
+            manager.upsert_project_memory(entry).expect("upsert");
+        }
+
+        let report_a = manager.garden_dry_run().expect("garden dry run a");
+        let report_b = manager.garden_dry_run().expect("garden dry run b");
+
+        assert_eq!(
+            report_a.candidates, report_b.candidates,
+            "garden candidates must be deterministic across runs"
+        );
+        assert!(
+            !report_a.candidates.is_empty(),
+            "near-duplicate clusters should surface candidates"
+        );
+        // Output is capped per scope regardless of input size.
+        assert!(report_a.candidates.len() <= 40);
+    });
+}

@@ -557,36 +557,52 @@ impl MemoryGraph {
     /// edge traversal weights so high-signal semantic/supersession links matter
     /// more than weak contradiction edges.
     pub fn memory_graph_scores(&self) -> Vec<MemoryGraphScore> {
-        let mut scores: Vec<MemoryGraphScore> = self
+        // Single linear pass over the edge set. For each forward edge we add its
+        // weight to the source's outgoing degree and, when the target is itself
+        // a memory, to the target's incoming degree. This is O(E) instead of the
+        // naive O(N * E^2) of re-scanning every source's edges per node.
+        struct Accum {
+            degree: usize,
+            weighted_degree: f32,
+        }
+
+        let mut accum: HashMap<&str, Accum> = self
             .memories
             .keys()
             .map(|id| {
-                let outgoing = self.get_edges(id);
-                let outgoing_degree = outgoing.len();
-                let outgoing_weight: f32 = outgoing
-                    .iter()
-                    .map(|edge| edge.kind.traversal_weight())
-                    .sum();
+                (
+                    id.as_str(),
+                    Accum {
+                        degree: 0,
+                        weighted_degree: 0.0,
+                    },
+                )
+            })
+            .collect();
 
-                let mut incoming_degree = 0usize;
-                let mut incoming_weight = 0.0f32;
-                if let Some(sources) = self.reverse_edges.get(id) {
-                    for source in sources {
-                        for edge in self.get_edges(source) {
-                            if edge.target == *id {
-                                incoming_degree += 1;
-                                incoming_weight += edge.kind.traversal_weight();
-                            }
-                        }
-                    }
+        for (source, edges) in &self.edges {
+            // Only memory nodes are scored; tag/cluster sources are ignored.
+            let source_is_memory = self.memories.contains_key(source);
+            for edge in edges {
+                let weight = edge.kind.traversal_weight();
+                if source_is_memory && let Some(entry) = accum.get_mut(source.as_str()) {
+                    entry.degree += 1;
+                    entry.weighted_degree += weight;
                 }
+                if let Some(entry) = accum.get_mut(edge.target.as_str()) {
+                    entry.degree += 1;
+                    entry.weighted_degree += weight;
+                }
+            }
+        }
 
-                MemoryGraphScore {
-                    id: id.clone(),
-                    degree: outgoing_degree + incoming_degree,
-                    weighted_degree: outgoing_weight + incoming_weight,
-                    centrality: 0.0,
-                }
+        let mut scores: Vec<MemoryGraphScore> = accum
+            .into_iter()
+            .map(|(id, a)| MemoryGraphScore {
+                id: id.to_string(),
+                degree: a.degree,
+                weighted_degree: a.weighted_degree,
+                centrality: 0.0,
             })
             .collect();
 

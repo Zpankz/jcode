@@ -7,6 +7,11 @@ use std::collections::HashMap;
 const DEDUP_SIMILARITY_THRESHOLD: f32 = 0.95;
 const RELATIONSHIP_SIMILARITY_THRESHOLD: f32 = 0.78;
 const MAX_CANDIDATES_PER_SCOPE: usize = 40;
+/// Upper bound on active embedded memories considered for the O(N^2) pairwise
+/// similarity scan in a single scope. This keeps the ambient garden pass cheap
+/// on large graphs; the most central memories are scanned first so the highest
+/// value candidates are still surfaced when the budget is hit.
+const MAX_PAIRWISE_MEMORIES: usize = 256;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -113,7 +118,15 @@ fn garden_candidates_for_graph(
         .active_memories()
         .filter(|memory| memory.embedding.is_some())
         .collect();
-    memories.sort_by(|a, b| a.id.cmp(&b.id));
+    // Scan the most central memories first, then break ties by id for a
+    // deterministic ordering, and cap the pairwise set so the O(N^2) cosine
+    // scan stays bounded on large graphs.
+    memories.sort_by(|a, b| {
+        let a_c = centrality.get(a.id.as_str()).copied().unwrap_or(0.0);
+        let b_c = centrality.get(b.id.as_str()).copied().unwrap_or(0.0);
+        b_c.total_cmp(&a_c).then_with(|| a.id.cmp(&b.id))
+    });
+    memories.truncate(MAX_PAIRWISE_MEMORIES);
 
     for i in 0..memories.len() {
         for j in (i + 1)..memories.len() {

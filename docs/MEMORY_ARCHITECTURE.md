@@ -807,6 +807,17 @@ cargo test -p jcode-base memory --lib --quiet
 cargo test -p jcode-app-core ambient --lib --quiet
 ```
 
+**Performance bounds (Phase 8.1.1):**
+
+- Centrality is a single linear pass over the edge set, O(E), instead of the
+  earlier O(N * E^2) re-scan; verified against an independent accessor-based
+  reference (`test_memory_graph_scores_match_brute_force_reference`).
+- The garden pairwise similarity scan is bounded to the `MAX_PAIRWISE_MEMORIES`
+  (256) most central active embedded memories per scope, keeping the ambient
+  pass cheap on large graphs while still surfacing the highest-value
+  candidates; determinism is verified above the budget
+  (`garden_dry_run_is_deterministic_under_large_pairwise_set`).
+
 ---
 
 ## Privacy & Security

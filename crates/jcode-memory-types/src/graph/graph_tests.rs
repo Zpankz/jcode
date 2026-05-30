@@ -254,6 +254,93 @@ fn test_cascade_retrieval_respects_depth() {
 }
 
 #[test]
+fn test_memory_graph_scores_match_brute_force_reference() {
+    // Build a graph with memory-to-memory, memory-to-tag, and supersede edges
+    // so both incoming and outgoing degrees are exercised, then compare the
+    // optimized single-pass implementation against an independent O(N*E)
+    // reference computation.
+    let mut graph = MemoryGraph::new();
+    let id_a = graph.add_memory(make_test_memory("alpha").with_tags(vec!["shared".into()]));
+    let id_b = graph.add_memory(make_test_memory("bravo").with_tags(vec!["shared".into()]));
+    let id_c = graph.add_memory(make_test_memory("charlie"));
+    let id_d = graph.add_memory(make_test_memory("delta"));
+
+    graph.link_memories(&id_a, &id_b, 0.9);
+    graph.link_memories(&id_a, &id_c, 0.5);
+    graph.link_memories(&id_b, &id_c, 0.7);
+    graph.supersede(&id_a, &id_d);
+    graph.mark_contradiction(&id_b, &id_c);
+
+    let reference = reference_scores(&graph);
+    let actual = graph.memory_graph_scores();
+
+    let actual_map: std::collections::HashMap<&str, &MemoryGraphScore> =
+        actual.iter().map(|s| (s.id.as_str(), s)).collect();
+
+    assert_eq!(actual.len(), reference.len());
+    for (id, (degree, weighted)) in &reference {
+        let score = actual_map
+            .get(id.as_str())
+            .unwrap_or_else(|| panic!("missing score for {id}"));
+        assert_eq!(score.degree, *degree, "degree mismatch for {id}");
+        assert!(
+            (score.weighted_degree - *weighted).abs() < 1e-5,
+            "weighted_degree mismatch for {id}: {} vs {}",
+            score.weighted_degree,
+            weighted
+        );
+    }
+}
+
+/// Independent reference using the public accessor API (get_edges /
+/// get_incoming) rather than iterating `edges` directly, giving a genuinely
+/// different computation path from the production single-pass implementation.
+fn reference_scores(graph: &MemoryGraph) -> std::collections::HashMap<String, (usize, f32)> {
+    let mut out: std::collections::HashMap<String, (usize, f32)> = std::collections::HashMap::new();
+    for id in graph.memories.keys() {
+        let mut degree = 0usize;
+        let mut weighted = 0.0f32;
+
+        // Outgoing edges from this memory.
+        for edge in graph.get_edges(id) {
+            degree += 1;
+            weighted += edge.kind.traversal_weight();
+        }
+
+        // Incoming edges: walk each distinct source that points at this id and
+        // count the specific edges whose target is this memory.
+        let mut seen_sources = std::collections::HashSet::new();
+        for source in graph.get_incoming(id) {
+            if !seen_sources.insert(source.to_string()) {
+                continue;
+            }
+            for edge in graph.get_edges(source) {
+                if edge.target == *id {
+                    degree += 1;
+                    weighted += edge.kind.traversal_weight();
+                }
+            }
+        }
+
+        out.insert(id.clone(), (degree, weighted));
+    }
+    out
+}
+
+#[test]
+fn test_memory_graph_scores_empty_and_isolated() {
+    let empty = MemoryGraph::new();
+    assert!(empty.memory_graph_scores().is_empty());
+
+    let mut graph = MemoryGraph::new();
+    graph.add_memory(make_test_memory("lonely"));
+    let scores = graph.memory_graph_scores();
+    assert_eq!(scores.len(), 1);
+    assert_eq!(scores[0].degree, 0);
+    assert_eq!(scores[0].centrality, 0.0);
+}
+
+#[test]
 fn test_cascade_retrieval_via_relates_to() {
     let mut graph = MemoryGraph::new();
 

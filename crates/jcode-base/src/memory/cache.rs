@@ -154,6 +154,7 @@ pub(super) fn cached_retrieval_results(key: &RetrievalCacheKey) -> Option<Vec<(M
     }
     let results = entry.results.clone();
     cache.stats.hits += 1;
+    cache.stats.entries = cache.entries.len();
     Some(results)
 }
 
