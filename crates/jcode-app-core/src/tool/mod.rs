@@ -7,6 +7,7 @@ mod bg;
 mod browser;
 mod codesearch;
 mod communicate;
+mod context_mode;
 mod conversation_search;
 mod debug_socket;
 mod edit;
@@ -232,6 +233,12 @@ impl Registry {
                 goal::InitiativeTool::new,
             );
             Self::insert_tool_timed(&mut m, &mut timings, "gmail", gmail::GmailTool::new);
+            Self::insert_tool_timed(
+                &mut m,
+                &mut timings,
+                "context_mode",
+                context_mode::ContextModeTool::new,
+            );
             Self::insert_tool_timed(&mut m, &mut timings, "schedule", ambient::ScheduleTool::new);
             Self::insert_tool_timed(&mut m, &mut timings, "selfdev", selfdev::SelfDevTool::new);
             let nonzero: Vec<String> = timings
