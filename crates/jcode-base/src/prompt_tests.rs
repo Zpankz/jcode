@@ -252,6 +252,18 @@ fn test_selfdev_prompt_prefers_publish_flow_for_active_builds() {
 }
 
 #[test]
+fn test_selfdev_prompt_includes_graph_evaluation_gate() {
+    let prompt = build_system_prompt_with_selfdev(None, &[], true);
+    assert!(prompt.contains("repo-graph tools as part of self-serve evaluation"));
+    assert!(prompt.contains("gitnexus impact -r jcode"));
+    assert!(prompt.contains("gitnexus query -r jcode"));
+    assert!(prompt.contains("scripts/selfdev_graph_eval.sh --brief"));
+    assert!(prompt.contains("gitnexus detect-changes -r jcode --scope all"));
+    assert!(prompt.contains("code-review-graph detect-changes --repo <jcode-repo> --base HEAD"));
+    assert!(prompt.contains("scripts/selfdev_graph_eval.sh --refresh --brief"));
+}
+
+#[test]
 fn test_selfdev_prompt_template_placeholders_are_resolved() {
     let static_prompt = build_selfdev_prompt_static();
     let dynamic_prompt = build_selfdev_prompt();

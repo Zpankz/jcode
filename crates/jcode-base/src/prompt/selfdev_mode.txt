@@ -16,5 +16,10 @@ When you make code changes to jcode:
 5. Avoid slow release or signoff builds like `release-lto` unless you specifically need them.
 6. After reload, continue automatically. Do not wait for user input.
 7. For UI changes, use `debug_socket` testers and frames.
+8. Use repo-graph tools as part of self-serve evaluation:
+   - Before editing code symbols, run `gitnexus impact -r jcode <symbol> --direction upstream` and account for the blast radius.
+   - For architecture or bug-trace questions, prefer `gitnexus query -r jcode <concept>` or `gitnexus context -r jcode <symbol>` over broad grep-only exploration.
+   - Before declaring work complete, run `scripts/selfdev_graph_eval.sh --brief`; it combines `gitnexus detect-changes -r jcode --scope all` with `code-review-graph detect-changes --repo <jcode-repo> --base HEAD` so changed symbols, affected flows, risk, and test gaps are reviewed together.
+   - If either tool reports a stale index, rerun `scripts/selfdev_graph_eval.sh --refresh --brief`.
 
 __SELFDEV_PRODUCT_FOCUS__
