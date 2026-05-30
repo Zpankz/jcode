@@ -149,6 +149,15 @@ pub fn openai_compatible_profiles() -> &'static [OpenAiCompatibleProfile] {
     &OPENAI_COMPAT_PROFILES
 }
 
+/// Look up a built-in OpenAI-compatible profile by its canonical id
+/// (e.g. `"grok-build"`, `"agt"`). Returns `None` for unknown ids.
+pub fn openai_compatible_profile_by_id(id: &str) -> Option<OpenAiCompatibleProfile> {
+    OPENAI_COMPAT_PROFILES
+        .iter()
+        .copied()
+        .find(|profile| profile.id == id)
+}
+
 pub fn login_providers() -> &'static [LoginProviderDescriptor] {
     &LOGIN_PROVIDERS
 }
@@ -507,7 +516,7 @@ mod tests {
         );
         assert_eq!(
             resolve_login_provider("opencodego").map(|provider| provider.id),
-            Some("opencode-go")
+            None
         );
         assert_eq!(
             resolve_login_provider("z.ai").map(|provider| provider.id),
@@ -519,11 +528,11 @@ mod tests {
         );
         assert_eq!(
             resolve_login_provider("kimi").map(|provider| provider.id),
-            Some("kimi")
+            None
         );
         assert_eq!(
             resolve_login_provider("kimi-for-coding").map(|provider| provider.id),
-            Some("kimi")
+            None
         );
         assert_eq!(
             resolve_login_provider("compat").map(|provider| provider.id),
@@ -579,7 +588,19 @@ mod tests {
         );
         assert_eq!(
             resolve_login_provider("grok").map(|provider| provider.id),
+            Some("grok-build")
+        );
+        assert_eq!(
+            resolve_login_provider("supergrok").map(|provider| provider.id),
+            Some("grok-build")
+        );
+        assert_eq!(
+            resolve_login_provider("x.ai").map(|provider| provider.id),
             Some("xai")
+        );
+        assert_eq!(
+            resolve_login_provider("agt-proxy").map(|provider| provider.id),
+            Some("agt")
         );
         assert_eq!(
             resolve_login_provider("lm-studio").map(|provider| provider.id),
@@ -623,6 +644,10 @@ mod tests {
         );
         assert_eq!(
             resolve_login_selection("6", &providers).map(|provider| provider.id),
+            Some("openrouter")
+        );
+        assert_eq!(
+            resolve_login_selection("7", &providers).map(|provider| provider.id),
             Some("bedrock")
         );
         assert_eq!(
@@ -640,23 +665,23 @@ mod tests {
             Some("auto-import")
         );
         assert_eq!(
-            resolve_login_selection("4", &providers).map(|provider| provider.id),
+            resolve_login_selection("5", &providers).map(|provider| provider.id),
             Some("jcode")
         );
         assert_eq!(
-            resolve_login_selection("5", &providers).map(|provider| provider.id),
+            resolve_login_selection("6", &providers).map(|provider| provider.id),
             Some("copilot")
         );
         assert_eq!(
-            resolve_login_selection("6", &providers).map(|provider| provider.id),
+            resolve_login_selection("7", &providers).map(|provider| provider.id),
             Some("openrouter")
         );
         assert_eq!(
-            resolve_login_selection("7", &providers).map(|provider| provider.id),
+            resolve_login_selection("8", &providers).map(|provider| provider.id),
             Some("bedrock")
         );
         assert_eq!(
-            resolve_login_selection("8", &providers).map(|provider| provider.id),
+            resolve_login_selection("9", &providers).map(|provider| provider.id),
             Some("azure")
         );
         assert_eq!(
@@ -665,3 +690,4 @@ mod tests {
         );
     }
 }
+

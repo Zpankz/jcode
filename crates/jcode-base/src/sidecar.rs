@@ -47,6 +47,14 @@ const DEFAULT_MAX_TOKENS: u32 = 1024;
 enum SidecarBackend {
     OpenAI,
     Claude,
+    /// Generic OpenAI-compatible chat-completions backend used by first-class
+    /// subscription providers like Grok Build (xAI OAuth) and the Antigravity
+    /// proxy. The profile carries the API base, key env, and provider id so the
+    /// sidecar can apply provider-specific transport quirks (e.g. Grok's signed
+    /// proxy headers, the Antigravity proxy's no-auth contract).
+    OpenAiCompatible {
+        profile: jcode_provider_metadata::OpenAiCompatibleProfile,
+    },
 }
 
 /// Lightweight client for fast sidecar calls
@@ -67,29 +75,10 @@ impl Sidecar {
     }
 
     fn with_configured_model(configured_model: Option<String>) -> Self {
-        let (backend, model) = if let Some(model) = configured_model {
-            match crate::provider::provider_for_model(&model) {
-                Some("openai") => (SidecarBackend::OpenAI, model),
-                Some("claude") => (SidecarBackend::Claude, model),
-                _ => {
-                    crate::logging::warn(&format!(
-                        "Ignoring unsupported memory sidecar model override '{}'; expected an OpenAI or Claude model",
-                        model
-                    ));
-                    if auth::codex::load_credentials().is_ok() {
-                        (SidecarBackend::OpenAI, SIDECAR_OPENAI_MODEL.to_string())
-                    } else {
-                        (SidecarBackend::Claude, SIDECAR_CLAUDE_MODEL.to_string())
-                    }
-                }
-            }
-        } else if auth::codex::load_credentials().is_ok() {
-            (SidecarBackend::OpenAI, SIDECAR_OPENAI_MODEL.to_string())
-        } else if auth::claude::load_credentials().is_ok() {
-            (SidecarBackend::Claude, SIDECAR_CLAUDE_MODEL.to_string())
+        let (backend, model) = if let Some(configured) = configured_model {
+            Self::resolve_backend_and_model(&configured)
         } else {
-            // Default to Claude - will fail on use with a clear error
-            (SidecarBackend::Claude, SIDECAR_CLAUDE_MODEL.to_string())
+            Self::default_backend_and_model()
         };
 
         Self {
@@ -97,6 +86,92 @@ impl Sidecar {
             model,
             max_tokens: DEFAULT_MAX_TOKENS,
             backend,
+        }
+    }
+
+    /// Resolve a configured memory-model string into a concrete backend + model.
+    ///
+    /// Supports an explicit `provider:model` (or `provider/model`) prefix so
+    /// proxy providers whose model ids collide with native ones can be selected
+    /// unambiguously, e.g. `agt:gemini-3-flash` routes the agt proxy rather than
+    /// the native Gemini backend, and `grok-build:grok-build` is explicit. A bare
+    /// model string keeps the legacy auto-detection via `provider_for_model`.
+    fn resolve_backend_and_model(configured: &str) -> (SidecarBackend, String) {
+        let configured = configured.trim();
+
+        // Explicit provider-qualified form: `provider:model` or `provider/model`.
+        // We only treat a prefix as a provider hint when it names a known
+        // OpenAI-compatible profile, so plain OpenRouter slugs (`vendor/model`)
+        // and native model ids are unaffected.
+        for sep in [':', '/'] {
+            if let Some((prefix, rest)) = configured.split_once(sep) {
+                let prefix = prefix.trim();
+                let rest = rest.trim();
+                if !prefix.is_empty() && !rest.is_empty() {
+                    if let Some(profile) =
+                        jcode_provider_metadata::openai_compatible_profile_by_id(prefix)
+                    {
+                        return (
+                            SidecarBackend::OpenAiCompatible { profile },
+                            rest.to_string(),
+                        );
+                    }
+                }
+            }
+        }
+
+        let model = configured.to_string();
+        match crate::provider::provider_for_model(&model) {
+            Some("openai") => (SidecarBackend::OpenAI, model),
+            Some("claude") => (SidecarBackend::Claude, model),
+            Some(provider_id) => {
+                // First-class OpenAI-compatible subscription providers
+                // (Grok Build, Antigravity proxy, and any catalog profile)
+                // route through the generic chat-completions backend so they
+                // work as memory/side-panel/ambient/orchestrator models.
+                if let Some(profile) =
+                    jcode_provider_metadata::openai_compatible_profile_by_id(provider_id)
+                {
+                    (SidecarBackend::OpenAiCompatible { profile }, model)
+                } else {
+                    crate::logging::warn(&format!(
+                        "Ignoring unsupported memory sidecar model override '{}' (provider '{}' has no OpenAI-compatible profile)",
+                        model, provider_id
+                    ));
+                    Self::default_backend_and_model()
+                }
+            }
+            None => {
+                // Last-resort match for bare model ids that don't resolve via
+                // `provider_for_model` but are the canonical default for an
+                // OpenAI-compatible profile (e.g. the bare `grok-build` id, which
+                // is both the provider id and its only served model).
+                if let Some(profile) = jcode_provider_metadata::openai_compatible_profiles()
+                    .iter()
+                    .copied()
+                    .find(|p| p.id == model || p.default_model == Some(model.as_str()))
+                {
+                    return (SidecarBackend::OpenAiCompatible { profile }, model);
+                }
+                crate::logging::warn(&format!(
+                    "Ignoring unsupported memory sidecar model override '{}'; could not resolve a provider",
+                    model
+                ));
+                Self::default_backend_and_model()
+            }
+        }
+    }
+
+    /// Default backend/model selection when no usable override is configured:
+    /// prefer OpenAI (codex-spark) if creds exist, else Claude.
+    fn default_backend_and_model() -> (SidecarBackend, String) {
+        if auth::codex::load_credentials().is_ok() {
+            (SidecarBackend::OpenAI, SIDECAR_OPENAI_MODEL.to_string())
+        } else if auth::claude::load_credentials().is_ok() {
+            (SidecarBackend::Claude, SIDECAR_CLAUDE_MODEL.to_string())
+        } else {
+            // Default to Claude - will fail on use with a clear error
+            (SidecarBackend::Claude, SIDECAR_CLAUDE_MODEL.to_string())
         }
     }
 
@@ -110,6 +185,7 @@ impl Sidecar {
         match self.backend {
             SidecarBackend::OpenAI => "openai",
             SidecarBackend::Claude => "claude",
+            SidecarBackend::OpenAiCompatible { profile } => profile.id,
         }
     }
 
@@ -119,6 +195,10 @@ impl Sidecar {
         match self.backend {
             SidecarBackend::OpenAI => self.complete_openai(system, user_message).await,
             SidecarBackend::Claude => self.complete_claude(system, user_message).await,
+            SidecarBackend::OpenAiCompatible { profile } => {
+                self.complete_openai_compatible(profile, system, user_message)
+                    .await
+            }
         }
     }
 
@@ -323,6 +403,74 @@ impl Sidecar {
         Ok(text)
     }
 
+    /// Complete via a generic OpenAI-compatible `/chat/completions` endpoint.
+    ///
+    /// Powers first-class subscription providers (Grok Build, Antigravity proxy)
+    /// as sidecar models. Resolves the API base (env override wins), the bearer
+    /// token per provider, and applies provider-specific transport quirks:
+    /// - Grok Build: signed proxy headers + xAI OAuth bearer from `~/.grok`.
+    /// - Antigravity proxy: no-auth contract; bearer omitted when absent.
+    async fn complete_openai_compatible(
+        &self,
+        profile: jcode_provider_metadata::OpenAiCompatibleProfile,
+        system: &str,
+        user_message: &str,
+    ) -> Result<String> {
+        let api_base = resolve_openai_compatible_base(&profile);
+        let url = format!("{}/chat/completions", api_base.trim_end_matches('/'));
+
+        let bearer = resolve_openai_compatible_bearer(&profile).await?;
+
+        let request = OpenAiChatRequest {
+            model: &self.model,
+            max_tokens: self.max_tokens,
+            messages: vec![
+                OpenAiChatMessage {
+                    role: "system",
+                    content: system,
+                },
+                OpenAiChatMessage {
+                    role: "user",
+                    content: user_message,
+                },
+            ],
+        };
+
+        let mut builder = self
+            .client
+            .post(&url)
+            .header("Content-Type", "application/json");
+        if let Some(token) = bearer.as_deref().filter(|t| !t.is_empty()) {
+            builder = builder.header("Authorization", format!("Bearer {}", token));
+        }
+        // Apply Grok proxy headers when targeting the Grok Build base; a no-op
+        // for every other OpenAI-compatible endpoint (incl. the agt proxy).
+        builder = crate::provider::openrouter::apply_grok_build_headers(builder, &api_base);
+
+        let response = builder
+            .json(&request)
+            .send()
+            .await
+            .with_context(|| format!("Failed to send request to {} API", profile.display_name))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("{} API error ({}): {}", profile.display_name, status, body);
+        }
+
+        let result: serde_json::Value = response.json().await.with_context(|| {
+            format!("Failed to parse {} API response", profile.display_name)
+        })?;
+
+        extract_openai_chat_text(&result).with_context(|| {
+            format!(
+                "Unexpected {} response shape: {}",
+                profile.display_name, result
+            )
+        })
+    }
+
     /// Check if a memory is relevant to the current context
     /// Returns (is_relevant, explanation)
     pub async fn check_relevance(
@@ -485,6 +633,108 @@ fn resolve_openai_request_model(
             Some(SIDECAR_OPENAI_OAUTH_FALLBACK_REASONING),
         ),
         _ => (SIDECAR_OPENAI_MODEL, None),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Generic OpenAI-compatible chat-completions support (Grok Build, agt proxy).
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+struct OpenAiChatRequest<'a> {
+    model: &'a str,
+    max_tokens: u32,
+    messages: Vec<OpenAiChatMessage<'a>>,
+}
+
+#[derive(Serialize)]
+struct OpenAiChatMessage<'a> {
+    role: &'a str,
+    content: &'a str,
+}
+
+/// Resolve the API base for an OpenAI-compatible profile, honoring the same
+/// runtime override the main transport uses so a single env redirect (e.g.
+/// `JCODE_GROK_API_BASE` style overrides surfaced via the openrouter env)
+/// keeps the sidecar and primary provider in sync.
+fn resolve_openai_compatible_base(
+    profile: &jcode_provider_metadata::OpenAiCompatibleProfile,
+) -> String {
+    // An explicit per-process override of the active OpenRouter-style base wins
+    // only when it already points at this profile's host; otherwise fall back to
+    // the profile's canonical base so memory calls never leak onto an unrelated
+    // primary-provider endpoint.
+    if let Ok(base) = std::env::var("JCODE_OPENROUTER_API_BASE") {
+        let base = base.trim();
+        if !base.is_empty()
+            && reqwest::Url::parse(base).ok().and_then(|u| {
+                u.host_str()
+                    .zip(reqwest::Url::parse(profile.api_base).ok().and_then(|p| {
+                        p.host_str().map(str::to_string)
+                    }))
+                    .map(|(a, b)| a == b)
+            }) == Some(true)
+        {
+            return base.trim_end_matches('/').to_string();
+        }
+    }
+    profile.api_base.trim_end_matches('/').to_string()
+}
+
+/// Resolve the bearer token for an OpenAI-compatible profile.
+///
+/// - Grok Build: refresh via xAI OAuth (`~/.grok/auth.json`) or env key.
+/// - Profiles that do not require a key (e.g. the agt proxy): `None`.
+/// - Everything else: the profile's API-key env var, when set.
+async fn resolve_openai_compatible_bearer(
+    profile: &jcode_provider_metadata::OpenAiCompatibleProfile,
+) -> Result<Option<String>> {
+    if profile.id == "grok-build" {
+        let token = auth::grok::resolve_access_token()
+            .await
+            .context("Failed to resolve Grok Build credentials for sidecar")?;
+        match token {
+            Some(token) if !token.trim().is_empty() => return Ok(Some(token)),
+            _ => anyhow::bail!(
+                "Grok Build has no usable credentials; run `jcode login grok` or set {}",
+                profile.api_key_env
+            ),
+        }
+    }
+
+    if let Ok(token) = std::env::var(profile.api_key_env) {
+        let token = token.trim().to_string();
+        if !token.is_empty() {
+            return Ok(Some(token));
+        }
+    }
+
+    if profile.requires_api_key {
+        anyhow::bail!(
+            "{} requires an API key; set {} or run `jcode login {}`",
+            profile.display_name,
+            profile.api_key_env,
+            profile.id
+        );
+    }
+
+    Ok(None)
+}
+
+/// Extract assistant text from a standard OpenAI chat-completions response.
+fn extract_openai_chat_text(result: &serde_json::Value) -> Result<String> {
+    let text = result
+        .get("choices")
+        .and_then(|choices| choices.as_array())
+        .and_then(|choices| choices.first())
+        .and_then(|choice| choice.get("message"))
+        .and_then(|message| message.get("content"))
+        .and_then(|content| content.as_str())
+        .map(|s| s.to_string());
+
+    match text {
+        Some(text) => Ok(text),
+        None => anyhow::bail!("response missing choices[0].message.content"),
     }
 }
 
@@ -872,5 +1122,118 @@ mod tests {
         let spark_request =
             build_openai_request(SIDECAR_OPENAI_MODEL, "system", "hello", true, None);
         assert!(spark_request.get("reasoning").is_none());
+    }
+
+    #[test]
+    fn provider_qualified_grok_build_routes_through_compat_backend() {
+        let (backend, model) = Sidecar::resolve_backend_and_model("grok-build:grok-build");
+        match backend {
+            SidecarBackend::OpenAiCompatible { profile } => {
+                assert_eq!(profile.id, "grok-build");
+                assert_eq!(profile.api_base, "https://cli-chat-proxy.grok.com/v1");
+            }
+            other => panic!("expected OpenAiCompatible backend, got {:?}", other),
+        }
+        assert_eq!(model, "grok-build");
+    }
+
+    #[test]
+    fn provider_qualified_agt_gemini_routes_through_proxy_not_native_gemini() {
+        // Without the explicit `agt:` prefix this model id would resolve to the
+        // native Gemini backend; the prefix forces the local proxy instead.
+        let (backend, model) = Sidecar::resolve_backend_and_model("agt:gemini-3-flash");
+        match backend {
+            SidecarBackend::OpenAiCompatible { profile } => {
+                assert_eq!(profile.id, "agt");
+                assert_eq!(profile.api_base, "http://localhost:8045/v1");
+                assert!(!profile.requires_api_key);
+            }
+            other => panic!("expected agt OpenAiCompatible backend, got {:?}", other),
+        }
+        assert_eq!(model, "gemini-3-flash");
+    }
+
+    #[test]
+    fn provider_qualified_agt_slash_form_also_works() {
+        let (backend, model) = Sidecar::resolve_backend_and_model("agt/claude-sonnet-4-5");
+        match backend {
+            SidecarBackend::OpenAiCompatible { profile } => assert_eq!(profile.id, "agt"),
+            other => panic!("expected agt backend, got {:?}", other),
+        }
+        assert_eq!(model, "claude-sonnet-4-5");
+    }
+
+    #[test]
+    fn bare_grok_build_model_resolves_to_compat_backend() {
+        // The bare `grok-build` model id auto-detects to the grok-build provider.
+        let (backend, _model) = Sidecar::resolve_backend_and_model("grok-build");
+        assert!(matches!(
+            backend,
+            SidecarBackend::OpenAiCompatible { profile } if profile.id == "grok-build"
+        ));
+    }
+
+    #[test]
+    fn unknown_slug_prefix_is_not_treated_as_provider() {
+        // `vendor/model` slugs must not be misread as a provider:model prefix
+        // when `vendor` is not a known OpenAI-compatible profile id. A made-up
+        // vendor falls through to provider_for_model (openrouter), which has no
+        // compat profile and no default-model match, so it does not produce an
+        // OpenAiCompatible backend keyed on the bogus vendor.
+        let (backend, _model) =
+            Sidecar::resolve_backend_and_model("acme-not-a-real-provider/some-model");
+        assert!(!matches!(
+            backend,
+            SidecarBackend::OpenAiCompatible { profile }
+                if profile.id == "acme-not-a-real-provider"
+        ));
+    }
+
+    #[test]
+    fn known_provider_slug_prefix_routes_through_proxy() {
+        // `deepseek` is a real OpenAI-compatible profile id, so the slug prefix
+        // form selects that proxy explicitly.
+        let (backend, model) = Sidecar::resolve_backend_and_model("deepseek/deepseek-chat");
+        match backend {
+            SidecarBackend::OpenAiCompatible { profile } => assert_eq!(profile.id, "deepseek"),
+            other => panic!("expected deepseek backend, got {:?}", other),
+        }
+        assert_eq!(model, "deepseek-chat");
+    }
+
+    #[test]
+    fn extract_openai_chat_text_reads_first_choice() {
+        let value = serde_json::json!({
+            "choices": [
+                {"message": {"role": "assistant", "content": "hello world"}}
+            ]
+        });
+        assert_eq!(extract_openai_chat_text(&value).unwrap(), "hello world");
+    }
+
+    #[test]
+    fn extract_openai_chat_text_errors_on_missing_content() {
+        let value = serde_json::json!({ "choices": [] });
+        assert!(extract_openai_chat_text(&value).is_err());
+    }
+
+    /// Live smoke test against the local Antigravity (agt) proxy.
+    ///
+    /// Ignored by default (needs `localhost:8045` running). Run with:
+    /// `cargo test --profile selfdev -p jcode-base --lib \
+    ///   sidecar::tests::agt_proxy_live_smoke -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore = "requires local agt proxy on :8045"]
+    async fn agt_proxy_live_smoke() {
+        let sidecar = Sidecar::with_configured_model(Some("agt:gemini-3-flash".to_string()));
+        assert_eq!(sidecar.backend_name(), "agt");
+        let out = sidecar
+            .complete("Reply with exactly PONG", "ping")
+            .await
+            .expect("agt proxy completion should succeed");
+        assert!(
+            out.to_ascii_uppercase().contains("PONG"),
+            "unexpected agt proxy reply: {out}"
+        );
     }
 }

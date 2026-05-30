@@ -10,6 +10,7 @@ pub mod doctor;
 pub mod external;
 pub mod gemini;
 pub mod google;
+pub mod grok;
 pub mod integration;
 pub mod lifecycle;
 #[cfg(any(test, feature = "test-support"))]

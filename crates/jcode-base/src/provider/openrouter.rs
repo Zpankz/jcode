@@ -62,6 +62,19 @@ const OPENROUTER_TRANSPORT_STATE_ENV: &str = "JCODE_OPENROUTER_TRANSPORT_STATE";
 const KIMI_CODING_USER_AGENT: &str = "claude-cli/1.0.0";
 const KIMI_CODING_X_APP: &str = "cli";
 
+/// Grok Build (SuperGrok subscription) proxy host. Requests to this host must
+/// carry the mandatory Grok CLI client headers below or the proxy returns a
+/// version-gate / auth error regardless of a valid bearer token.
+const GROK_BUILD_PROXY_HOST: &str = "cli-chat-proxy.grok.com";
+/// Static sentinel identifying the request as the Grok CLI client.
+const GROK_BUILD_TOKEN_AUTH: &str = "xai-grok-cli";
+/// The only model the Grok Build proxy serves; sent as an override header.
+const GROK_BUILD_MODEL_OVERRIDE: &str = "grok-build";
+/// Minimum acceptable Grok client version (proxy is version-gated). We send a
+/// value that satisfies the gate; can be overridden via env for forward-compat.
+const GROK_BUILD_CLIENT_VERSION: &str = "0.2.3";
+const GROK_BUILD_CLIENT_VERSION_ENV: &str = "JCODE_GROK_CLIENT_VERSION";
+
 /// Default model (Claude Sonnet via OpenRouter)
 const DEFAULT_MODEL: &str = "anthropic/claude-sonnet-4";
 
@@ -454,6 +467,40 @@ fn apply_kimi_coding_agent_headers(
     }
 }
 
+/// Whether `api_base` targets the Grok Build subscription proxy.
+pub(crate) fn is_grok_build_api_base(api_base: &str) -> bool {
+    reqwest::Url::parse(api_base)
+        .ok()
+        .and_then(|url| url.host_str().map(|host| host == GROK_BUILD_PROXY_HOST))
+        .unwrap_or(false)
+}
+
+/// Grok client version to advertise; env override wins for forward-compat.
+fn grok_build_client_version() -> String {
+    std::env::var(GROK_BUILD_CLIENT_VERSION_ENV)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| GROK_BUILD_CLIENT_VERSION.to_string())
+}
+
+/// Inject the mandatory Grok Build headers when targeting the Grok proxy.
+///
+/// Missing `x-grok-client-version` triggers a version-gate error from the proxy
+/// even with a valid bearer, so these are required on every Grok request.
+pub(crate) fn apply_grok_build_headers(
+    req: reqwest::RequestBuilder,
+    api_base: &str,
+) -> reqwest::RequestBuilder {
+    if is_grok_build_api_base(api_base) {
+        req.header("X-XAI-Token-Auth", GROK_BUILD_TOKEN_AUTH)
+            .header("x-grok-model-override", GROK_BUILD_MODEL_OVERRIDE)
+            .header("x-grok-client-version", grok_build_client_version())
+    } else {
+        req
+    }
+}
+
 #[derive(Debug, Clone)]
 enum ProviderAuth {
     AuthorizationBearer {
@@ -538,7 +585,10 @@ async fn fetch_models_from_api(
 ) -> Result<Vec<ModelInfo>> {
     let url = format!("{}/models", api_base);
     let response =
-        apply_kimi_coding_agent_headers(auth.apply(client.get(&url)).await?, &api_base, None)
+        apply_grok_build_headers(
+            apply_kimi_coding_agent_headers(auth.apply(client.get(&url)).await?, &api_base, None),
+            &api_base,
+        )
             .send()
             .await
             .with_context(|| {
