@@ -404,7 +404,9 @@ pub fn run_setup_hotkey(_listen_macos_hotkey: bool) -> Result<()> {
         eprintln!("\x1b[1mjcode setup-hotkey\x1b[0m");
         eprintln!();
         eprintln!("  Preferred terminal: {}", terminal.label());
-        eprintln!("  Installing a LaunchAgent so Cmd+; launches a new jcode from anywhere, system-wide.");
+        eprintln!(
+            "  Installing a LaunchAgent so Cmd+; launches a new jcode from anywhere, system-wide."
+        );
         eprintln!();
 
         match install_macos_hotkey_listener(Some(terminal)) {
@@ -628,9 +630,7 @@ pub enum MacHotkeyAction {
 fn mac_hotkey_action_for_state(state: &SetupHintsState) -> MacHotkeyAction {
     if !state.hotkey_configured && !state.hotkey_dismissed {
         MacHotkeyAction::Install
-    } else if state.hotkey_configured
-        && state.hotkey_listener_version < HOTKEY_LISTENER_VERSION
-    {
+    } else if state.hotkey_configured && state.hotkey_listener_version < HOTKEY_LISTENER_VERSION {
         MacHotkeyAction::Migrate
     } else {
         MacHotkeyAction::None

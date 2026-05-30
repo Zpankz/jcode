@@ -16,13 +16,8 @@ impl Provider for OpenRouterProvider {
         let thinking_override = Self::thinking_override();
         let kimi_coding_route =
             is_kimi_coding_route_parts(&self.api_base, self.profile_id.as_deref(), &model);
-        let thinking_enabled = thinking_override.or_else(|| {
-            if kimi_coding_route {
-                Some(true)
-            } else {
-                None
-            }
-        });
+        let thinking_enabled =
+            thinking_override.or_else(|| if kimi_coding_route { Some(true) } else { None });
         let allow_reasoning = self.supports_provider_features && thinking_enabled != Some(false);
         let include_reasoning_content =
             thinking_enabled == Some(true) || (allow_reasoning && Self::is_kimi_model(&model));

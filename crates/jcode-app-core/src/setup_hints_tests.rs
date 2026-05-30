@@ -101,7 +101,10 @@ fn paused_jcode_shell_command_keeps_failures_visible() {
 #[test]
 fn fresh_user_gets_hotkey_install() {
     let state = SetupHintsState::default();
-    assert_eq!(mac_hotkey_action_for_state(&state), MacHotkeyAction::Install);
+    assert_eq!(
+        mac_hotkey_action_for_state(&state),
+        MacHotkeyAction::Install
+    );
 }
 
 #[test]
@@ -113,7 +116,10 @@ fn legacy_configured_user_gets_migrated_on_update() {
         hotkey_listener_version: 0,
         ..SetupHintsState::default()
     };
-    assert_eq!(mac_hotkey_action_for_state(&state), MacHotkeyAction::Migrate);
+    assert_eq!(
+        mac_hotkey_action_for_state(&state),
+        MacHotkeyAction::Migrate
+    );
 }
 
 #[test]

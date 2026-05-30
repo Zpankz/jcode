@@ -62,9 +62,7 @@ pub(super) fn parse_poke_command(trimmed: &str) -> Option<Result<PokeCommand, St
         "/poke on" => Some(Ok(PokeCommand::On)),
         "/poke off" => Some(Ok(PokeCommand::Off)),
         "/poke status" => Some(Ok(PokeCommand::Status)),
-        _ if trimmed.starts_with("/poke ") => {
-            Some(Err("Usage: /poke [on|off|status]".to_string()))
-        }
+        _ if trimmed.starts_with("/poke ") => Some(Err("Usage: /poke [on|off|status]".to_string())),
         _ => None,
     }
 }
@@ -872,9 +870,7 @@ pub(super) fn handle_log_command(app: &mut App, trimmed: &str) -> bool {
     let note = parts.next().unwrap_or_default().trim();
 
     if subcommand != "mark" {
-        app.push_display_message(DisplayMessage::error(
-            "Usage: /log mark [note]".to_string(),
-        ));
+        app.push_display_message(DisplayMessage::error("Usage: /log mark [note]".to_string()));
         return true;
     }
 
@@ -1215,9 +1211,7 @@ fn handle_btw_command(app: &mut App, trimmed: &str) -> bool {
 
     let question = trimmed.strip_prefix("/btw").unwrap_or_default().trim();
     if question.is_empty() {
-        app.push_display_message(DisplayMessage::error(
-            "Usage: /btw <question>".to_string(),
-        ));
+        app.push_display_message(DisplayMessage::error("Usage: /btw <question>".to_string()));
         return true;
     }
 
@@ -1371,8 +1365,7 @@ fn git_command_repo_dir(app: &App) -> Result<PathBuf, String> {
 
     if app.is_remote {
         return Err(
-            "Unable to run /git: the remote session does not have a working directory."
-                .to_string(),
+            "Unable to run /git: the remote session does not have a working directory.".to_string(),
         );
     }
 
@@ -1473,10 +1466,7 @@ fn handle_git_command(app: &mut App, trimmed: &str) -> bool {
 }
 
 fn transcript_opened_message(path: &std::path::Path) -> String {
-    format!(
-        "Opened transcript file:\n\n  {}",
-        path.display()
-    )
+    format!("Opened transcript file:\n\n  {}", path.display())
 }
 
 fn transcript_path_message(path: &std::path::Path) -> String {

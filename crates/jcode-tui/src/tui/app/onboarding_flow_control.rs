@@ -77,10 +77,7 @@ impl App {
     /// Decides whether to offer "continue where you left off" based on detected
     /// external Codex / Claude Code OAuth logins.
     pub(super) fn onboarding_after_model_select(&mut self) {
-        if !matches!(
-            self.onboarding_phase(),
-            Some(OnboardingPhase::ModelSelect)
-        ) {
+        if !matches!(self.onboarding_phase(), Some(OnboardingPhase::ModelSelect)) {
             return;
         }
         match detect_external_cli_oauth() {
