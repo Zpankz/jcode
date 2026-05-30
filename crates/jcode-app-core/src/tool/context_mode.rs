@@ -1,3 +1,4 @@
+use super::integration_support as support;
 use super::{Tool, ToolContext, ToolOutput};
 use crate::mcp::{McpConfig, McpServerConfig};
 use anyhow::{Context, Result};
@@ -89,20 +90,18 @@ impl Tool for ContextModeTool {
     }
 }
 
-fn jcode_dir() -> Result<PathBuf> {
-    crate::storage::jcode_dir().context("resolve ~/.jcode directory")
-}
-
 fn mcp_config_path() -> Result<PathBuf> {
-    Ok(jcode_dir()?.join("mcp.json"))
+    Ok(support::jcode_dir()?.join("mcp.json"))
 }
 
 fn preferred_tools_path() -> Result<PathBuf> {
-    Ok(jcode_dir()?.join("preferred-tools.md"))
+    support::preferred_tools_path()
 }
 
 fn manifest_path() -> Result<PathBuf> {
-    Ok(jcode_dir()?.join("context-mode").join("manifest.json"))
+    Ok(support::jcode_dir()?
+        .join("context-mode")
+        .join("manifest.json"))
 }
 
 fn context_mode_server_config() -> McpServerConfig {
@@ -169,116 +168,21 @@ Jcode native mapping:
     )
 }
 
-fn upsert_marked_block(existing: &str, block: &str) -> String {
-    if let (Some(start), Some(end)) = (existing.find(BLOCK_START), existing.find(BLOCK_END)) {
-        let end = end + BLOCK_END.len();
-        let mut out = String::with_capacity(existing.len() - (end - start) + block.len() + 2);
-        out.push_str(existing[..start].trim_end());
-        if !out.is_empty() {
-            out.push_str("\n\n");
-        }
-        out.push_str(block);
-        let rest = existing[end..].trim_start();
-        if !rest.is_empty() {
-            out.push_str("\n\n");
-            out.push_str(rest);
-        }
-        return out;
-    }
-
-    if existing.trim().is_empty() {
-        block.to_string()
-    } else {
-        format!("{}\n\n{}", existing.trim_end(), block)
-    }
-}
-
 fn ensure_preferred_tools_block(overwrite: bool) -> Result<bool> {
-    let path = preferred_tools_path()?;
-    let block = context_mode_preferred_tools_block();
-    let existing = std::fs::read_to_string(&path).unwrap_or_default();
-    if existing.contains(BLOCK_START) && !overwrite {
-        return Ok(false);
-    }
-    let content = upsert_marked_block(&existing, &block);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(&path, content)?;
-    Ok(true)
-}
-
-fn candidate_context_mode_roots(explicit: Option<&str>) -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    if let Some(root) = explicit {
-        roots.push(PathBuf::from(root));
-    }
-    if let Ok(root) = std::env::var("CONTEXT_MODE_ROOT") {
-        if !root.trim().is_empty() {
-            roots.push(PathBuf::from(root));
-        }
-    }
-    if let Ok(cwd) = std::env::current_dir() {
-        roots.push(cwd.join("node_modules").join("context-mode"));
-    }
-    roots
+    support::ensure_preferred_tools_block(
+        &context_mode_preferred_tools_block(),
+        BLOCK_START,
+        BLOCK_END,
+        overwrite,
+    )
 }
 
 fn find_context_mode_root(explicit: Option<&str>) -> Option<PathBuf> {
-    candidate_context_mode_roots(explicit)
-        .into_iter()
-        .find(|root| root.join("skills").is_dir())
-}
-
-fn copy_dir_recursive(src: &Path, dst: &Path, overwrite: bool) -> Result<()> {
-    if dst.exists() {
-        if overwrite {
-            std::fs::remove_dir_all(dst)?;
-        } else {
-            return Ok(());
-        }
-    }
-    std::fs::create_dir_all(dst)?;
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
-        let src_path = entry.path();
-        let dst_path = dst.join(entry.file_name());
-        if src_path.is_dir() {
-            copy_dir_recursive(&src_path, &dst_path, overwrite)?;
-        } else {
-            std::fs::copy(&src_path, &dst_path)?;
-        }
-    }
-    Ok(())
+    support::find_root_with_skills(explicit, "CONTEXT_MODE_ROOT", "context-mode")
 }
 
 fn import_context_mode_skills(root: &Path, overwrite: bool) -> Result<Vec<String>> {
-    let skills_src = root.join("skills");
-    let skills_dst = jcode_dir()?.join("skills");
-    std::fs::create_dir_all(&skills_dst)?;
-
-    let mut imported = Vec::new();
-    for entry in std::fs::read_dir(&skills_src).with_context(|| {
-        format!(
-            "read context-mode skills directory at {}",
-            skills_src.display()
-        )
-    })? {
-        let entry = entry?;
-        let src = entry.path();
-        if !src.is_dir() || !src.join("SKILL.md").exists() {
-            continue;
-        }
-        let name = entry.file_name().to_string_lossy().to_string();
-        let dst = skills_dst.join(&name);
-        if dst.exists() && !overwrite {
-            continue;
-        }
-        copy_dir_recursive(&src, &dst, overwrite)?;
-        imported.push(name);
-    }
-    imported.sort();
-    Ok(imported)
+    support::import_skills_from_root(root, overwrite)
 }
 
 fn write_manifest(manifest: &ContextModeManifest) -> Result<()> {
@@ -376,36 +280,21 @@ fn status_output() -> Result<ToolOutput> {
         .map(|s| s.contains(BLOCK_START))
         .unwrap_or(false);
     let manifest_present = manifest.exists();
-    let skill_dir = jcode_dir()?.join("skills");
-    let skill_count = std::fs::read_dir(&skill_dir)
-        .ok()
-        .map(|entries| {
-            entries
-                .flatten()
-                .filter(|e| e.path().join("SKILL.md").exists())
-                .filter(|e| {
-                    e.file_name().to_string_lossy().starts_with("ctx-")
-                        || e.file_name().to_string_lossy() == "context-mode"
-                })
-                .count()
-        })
-        .unwrap_or(0);
+    let skill_dir = support::jcode_dir()?.join("skills");
+    let skill_count =
+        support::count_skills_matching(|name| name.starts_with("ctx-") || name == "context-mode");
 
     Ok(ToolOutput::new(format!(
         "Context Mode native Jcode status:\n- MCP server `{SERVER_NAME}` configured: {} ({})\n- Preferred-tool routing block installed: {} ({})\n- Imported context-mode skills: {} ({})\n- Migration manifest present: {} ({})",
-        yes_no(mcp_present),
+        support::yes_no(mcp_present),
         mcp_path.display(),
-        yes_no(preferred_present),
+        support::yes_no(preferred_present),
         preferred_path.display(),
         skill_count,
         skill_dir.display(),
-        yes_no(manifest_present),
+        support::yes_no(manifest_present),
         manifest.display(),
     )))
-}
-
-fn yes_no(value: bool) -> &'static str {
-    if value { "yes" } else { "no" }
 }
 
 #[cfg(test)]

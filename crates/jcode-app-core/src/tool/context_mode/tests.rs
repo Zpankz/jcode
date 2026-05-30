@@ -52,7 +52,12 @@ fn marked_block_upsert_replaces_existing_context_mode_block() {
     let first = format!("before\n\n{BLOCK_START}\nold\n{BLOCK_END}\n\nafter");
     let second = format!("{BLOCK_START}\nnew\n{BLOCK_END}");
 
-    let out = upsert_marked_block(&first, &second);
+    let out = crate::tool::integration_support::upsert_marked_block(
+        &first,
+        &second,
+        BLOCK_START,
+        BLOCK_END,
+    );
 
     assert!(out.contains("before"));
     assert!(out.contains("new"));

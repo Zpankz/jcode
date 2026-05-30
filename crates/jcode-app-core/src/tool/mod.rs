@@ -5,6 +5,7 @@ mod bash;
 mod batch;
 mod bg;
 mod browser;
+mod caveman;
 mod codesearch;
 mod communicate;
 mod context_mode;
@@ -15,6 +16,7 @@ mod glob;
 mod gmail;
 mod goal;
 mod grep;
+mod integration_support;
 mod invalid;
 mod ls;
 mod lsp;
@@ -24,6 +26,7 @@ mod multiedit;
 mod open;
 mod patch;
 mod read;
+mod rtk;
 pub mod selfdev;
 mod session_search;
 mod side_panel;
@@ -239,6 +242,8 @@ impl Registry {
                 "context_mode",
                 context_mode::ContextModeTool::new,
             );
+            Self::insert_tool_timed(&mut m, &mut timings, "rtk", rtk::RtkTool::new);
+            Self::insert_tool_timed(&mut m, &mut timings, "caveman", caveman::CavemanTool::new);
             Self::insert_tool_timed(&mut m, &mut timings, "schedule", ambient::ScheduleTool::new);
             Self::insert_tool_timed(&mut m, &mut timings, "selfdev", selfdev::SelfDevTool::new);
             let nonzero: Vec<String> = timings
