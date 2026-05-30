@@ -414,6 +414,33 @@ fn should_send_kimi_coding_agent_headers(api_base: &str, model: Option<&str>) ->
     is_coding_agent_api_base(api_base) || model.map(is_kimi_model_name).unwrap_or(false)
 }
 
+fn is_kimi_coding_route_parts(api_base: &str, profile_id: Option<&str>, model: &str) -> bool {
+    profile_id
+        .map(|id| id.eq_ignore_ascii_case("kimi"))
+        .unwrap_or(false)
+        || is_kimi_coding_api_base(api_base)
+        || is_kimi_model_name(model)
+}
+
+fn requires_reasoning_content_for_tool_calls_parts(
+    api_base: &str,
+    profile_id: Option<&str>,
+    model: &str,
+    thinking_enabled: Option<bool>,
+    allow_reasoning: bool,
+) -> bool {
+    if thinking_enabled == Some(false) {
+        return false;
+    }
+
+    // Kimi's coding endpoint rejects thinking-enabled assistant tool-call
+    // messages unless every such message carries `reasoning_content`. This is
+    // true even when the selected model is an alias such as `gpt-5.5`, so route
+    // by endpoint/profile as well as by model name.
+    (thinking_enabled == Some(true) || allow_reasoning)
+        && is_kimi_coding_route_parts(api_base, profile_id, model)
+}
+
 fn apply_kimi_coding_agent_headers(
     req: reqwest::RequestBuilder,
     api_base: &str,

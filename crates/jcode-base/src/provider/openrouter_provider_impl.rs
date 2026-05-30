@@ -14,8 +14,10 @@ impl Provider for OpenRouterProvider {
         let model = self.model.read().await.clone();
         let reasoning_effort = self.reasoning_effort();
         let thinking_override = Self::thinking_override();
+        let kimi_coding_route =
+            is_kimi_coding_route_parts(&self.api_base, self.profile_id.as_deref(), &model);
         let thinking_enabled = thinking_override.or_else(|| {
-            if Self::is_kimi_model(&model) {
+            if kimi_coding_route {
                 Some(true)
             } else {
                 None
@@ -24,6 +26,14 @@ impl Provider for OpenRouterProvider {
         let allow_reasoning = self.supports_provider_features && thinking_enabled != Some(false);
         let include_reasoning_content =
             thinking_enabled == Some(true) || (allow_reasoning && Self::is_kimi_model(&model));
+        let require_reasoning_content_for_tool_calls =
+            requires_reasoning_content_for_tool_calls_parts(
+                &self.api_base,
+                self.profile_id.as_deref(),
+                &model,
+                thinking_enabled,
+                allow_reasoning,
+            );
 
         let mut effective_messages: Vec<Message> = messages.to_vec();
         let cache_supported = self.model_supports_cache(&model).await;
@@ -217,8 +227,8 @@ impl Provider for OpenRouterProvider {
                     }
 
                     let has_reasoning_content = !reasoning_content.is_empty();
-                    if allow_reasoning
-                        && (include_reasoning_content || has_reasoning_content)
+                    if (allow_reasoning && (include_reasoning_content || has_reasoning_content)
+                        || require_reasoning_content_for_tool_calls)
                         && (has_reasoning_content || !tool_calls.is_empty())
                     {
                         let reasoning_payload = if has_reasoning_content {
@@ -314,7 +324,7 @@ impl Provider for OpenRouterProvider {
         for (idx, mut msg) in api_messages.into_iter().enumerate() {
             let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("");
             if role == "assistant"
-                && allow_reasoning
+                && require_reasoning_content_for_tool_calls
                 && msg.get("tool_calls").and_then(|v| v.as_array()).is_some()
             {
                 let needs_reasoning = match msg.get("reasoning_content") {

@@ -1384,6 +1384,36 @@ fn test_kimi_coding_header_detection_matches_endpoint_and_model() {
 }
 
 #[test]
+fn test_kimi_coding_route_requires_reasoning_content_even_for_alias_model() {
+    assert!(is_kimi_coding_route_parts(
+        "https://api.kimi.com/coding/v1",
+        Some("kimi"),
+        "gpt-5.5",
+    ));
+    assert!(requires_reasoning_content_for_tool_calls_parts(
+        "https://api.kimi.com/coding/v1",
+        Some("kimi"),
+        "gpt-5.5",
+        Some(true),
+        false,
+    ));
+    assert!(!requires_reasoning_content_for_tool_calls_parts(
+        "https://api.kimi.com/coding/v1",
+        Some("kimi"),
+        "gpt-5.5",
+        Some(false),
+        true,
+    ));
+    assert!(!requires_reasoning_content_for_tool_calls_parts(
+        "https://example.com/v1",
+        None,
+        "gpt-5.5",
+        Some(true),
+        false,
+    ));
+}
+
+#[test]
 fn test_openrouter_kimi_chat_request_includes_compat_user_agent() {
     let request = apply_kimi_coding_agent_headers(
         Client::new().post("https://openrouter.ai/api/v1/chat/completions"),
