@@ -773,6 +773,40 @@ Full graph-wide consolidation that runs during ambient mode background cycles. S
 - [ ] Embedding backfill for memories missing embeddings
 - [ ] Knowledge graph optimization
 
+### Phase 8.1: Minimal Safe Graph MVP ✅
+
+The first deployable garden slice is intentionally conservative: it improves
+hot-path performance and prioritization without introducing external graph
+databases, GNN runtimes, destructive merges, or Beads/RuVector runtime
+dependencies.
+
+**Implemented components:**
+
+| Component | Behavior | Safety invariant |
+|-----------|----------|------------------|
+| Retrieval result cache | 30s in-process cache for semantic/cascade recall results keyed by query, mode, scope, limit, threshold, and graph file mtimes | Any graph save changes the cache key, so graph mutations do not reuse stale results |
+| Cache telemetry | Hit, miss, insert, stale, eviction, and entry counters via `retrieval_cache_stats()` | Telemetry is read-only and does not alter retrieval behavior |
+| Lightweight graph analytics | Deterministic memory centrality from weighted incoming/outgoing graph degree | Scores are normalized, deterministic, and dependency-free |
+| Ambient garden dry-run | Non-mutating candidate report for dedup, relation, and prune work | Ambient only logs candidates; it does not merge, delete, or link memories |
+
+**Red-team validation contract:**
+
+- Cache scope isolation: project/global/all keys must not collide.
+- Cache staleness: writing a graph must change the mtime-backed retrieval key.
+- Cache boundedness: the retrieval cache is LRU-bounded and short-TTL.
+- Garden non-destruction: dry-run reports must not change memory count or edge count.
+- Garden false-positive control: dedup threshold is high (`>=0.95`); relationship suggestions use a lower threshold but skip already-related pairs.
+- Analytics determinism: repeated graph scoring returns identical ordering and normalized scores.
+- Ambient safety: post-cycle garden work is fire-and-forget and log-only.
+
+**Validation commands:**
+
+```bash
+cargo test -p jcode-memory-types --quiet
+cargo test -p jcode-base memory --lib --quiet
+cargo test -p jcode-app-core ambient --lib --quiet
+```
+
 ---
 
 ## Privacy & Security

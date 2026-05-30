@@ -1,6 +1,7 @@
 pub mod graph;
 pub use graph::{
-    ClusterEntry, Edge, EdgeKind, GRAPH_VERSION, GraphMetadata, MemoryGraph, TagEntry,
+    ClusterEntry, Edge, EdgeKind, GRAPH_VERSION, GraphMetadata, MemoryGraph, MemoryGraphScore,
+    TagEntry,
 };
 
 use std::time::Instant;
@@ -449,7 +450,7 @@ impl MemoryCategory {
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MemoryScope {
     Project,
     Global,

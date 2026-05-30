@@ -780,6 +780,24 @@ impl AmbientRunnerHandle {
                                 ));
                             }
                         }
+
+                        match manager.garden_dry_run() {
+                            Ok(report) => {
+                                if !report.candidates.is_empty() {
+                                    logging::info(&format!(
+                                        "Ambient: memory garden dry-run found {} candidate(s) across {} memories",
+                                        report.candidates.len(),
+                                        report.scanned_memories
+                                    ));
+                                }
+                            }
+                            Err(e) => {
+                                logging::error(&format!(
+                                    "Ambient: memory garden dry-run failed: {}",
+                                    e
+                                ));
+                            }
+                        }
                     });
                 }
                 Err(e) => {

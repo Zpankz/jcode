@@ -24,6 +24,8 @@ use std::time::Instant;
 #[path = "memory/activity.rs"]
 mod activity;
 mod cache;
+#[path = "memory/garden.rs"]
+mod garden;
 #[path = "memory/pending.rs"]
 mod pending;
 #[path = "memory_prompt.rs"]
@@ -41,7 +43,15 @@ pub use activity::{
     activity_snapshot, add_event, apply_remote_activity_snapshot, check_staleness, clear_activity,
     get_activity, pipeline_start, pipeline_update, record_injected_prompt, set_state,
 };
-use cache::{cache_graph, cached_graph};
+use cache::clear_retrieval_cache;
+#[cfg(test)]
+use cache::clear_retrieval_cache_for_tests;
+use cache::{
+    RetrievalCacheKey, cache_graph, cache_retrieval_results, cached_graph,
+    cached_retrieval_results, graph_mtime_signature,
+};
+pub use cache::{RetrievalCacheStats, retrieval_cache_stats};
+pub use garden::{GardenCandidateKind, MemoryGardenCandidate, MemoryGardenReport};
 #[cfg(test)]
 use pending::insert_pending_memory_for_test;
 pub use pending::{
@@ -556,6 +566,11 @@ impl MemoryManager {
         limit: usize,
         scope: MemoryScope,
     ) -> Result<Vec<(MemoryEntry, f32)>> {
+        let cache_key = self.retrieval_cache_key("semantic", text, threshold, limit, scope)?;
+        if let Some(results) = cached_retrieval_results(&cache_key) {
+            return Ok(results);
+        }
+
         let query_embedding = match crate::embedding::embed(text) {
             Ok(emb) => emb,
             Err(e) => {
@@ -567,7 +582,39 @@ impl MemoryManager {
             }
         };
 
-        self.find_similar_with_embedding_scoped(&query_embedding, threshold, limit, scope)
+        let results =
+            self.find_similar_with_embedding_scoped(&query_embedding, threshold, limit, scope)?;
+        cache_retrieval_results(cache_key, &results);
+        Ok(results)
+    }
+
+    fn retrieval_cache_key(
+        &self,
+        mode: &'static str,
+        text: &str,
+        threshold: f32,
+        limit: usize,
+        scope: MemoryScope,
+    ) -> Result<RetrievalCacheKey> {
+        let project_path = if scope.includes_project() {
+            self.project_memory_path()?
+        } else {
+            None
+        };
+        let global_path = if scope.includes_global() {
+            Some(self.global_memory_path()?)
+        } else {
+            None
+        };
+        Ok(RetrievalCacheKey::new(
+            mode,
+            scope,
+            text,
+            threshold,
+            limit,
+            graph_mtime_signature(project_path.as_ref()),
+            graph_mtime_signature(global_path.as_ref()),
+        ))
     }
 
     /// Find memories similar to the given embedding
@@ -1636,6 +1683,7 @@ impl MemoryManager {
     pub fn save_project_graph(&self, graph: &MemoryGraph) -> Result<()> {
         if let Some(path) = self.project_memory_path()? {
             storage::write_json(&path, graph)?;
+            clear_retrieval_cache();
             if !self.test_mode {
                 cache_graph(path, graph);
             }
@@ -1647,6 +1695,7 @@ impl MemoryManager {
     pub fn save_global_graph(&self, graph: &MemoryGraph) -> Result<()> {
         let path = self.global_memory_path()?;
         storage::write_json(&path, graph)?;
+        clear_retrieval_cache();
         if !self.test_mode {
             cache_graph(path, graph);
         }
@@ -1744,6 +1793,11 @@ impl MemoryManager {
         limit: usize,
         scope: MemoryScope,
     ) -> Result<Vec<(MemoryEntry, f32)>> {
+        let cache_key = self.retrieval_cache_key("cascade", text, threshold, limit, scope)?;
+        if let Some(results) = cached_retrieval_results(&cache_key) {
+            return Ok(results);
+        }
+
         // First, do basic embedding search
         let embedding_hits = self.find_similar_scoped(text, threshold, limit, scope)?;
 
@@ -1815,6 +1869,7 @@ impl MemoryManager {
             limit,
         );
 
+        cache_retrieval_results(cache_key, &results);
         Ok(results)
     }
 

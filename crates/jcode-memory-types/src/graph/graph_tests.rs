@@ -155,6 +155,29 @@ fn test_node_and_edge_counts() {
 }
 
 #[test]
+fn test_memory_graph_scores_are_deterministic_and_normalized() {
+    let mut graph = MemoryGraph::new();
+    let id_a = graph.add_memory(make_test_memory("hub").with_tags(vec!["shared".into()]));
+    let id_b = graph.add_memory(make_test_memory("related").with_tags(vec!["shared".into()]));
+    let id_c = graph.add_memory(make_test_memory("leaf"));
+
+    graph.link_memories(&id_a, &id_b, 0.9);
+    graph.link_memories(&id_a, &id_c, 0.5);
+
+    let first = graph.memory_graph_scores();
+    let second = graph.memory_graph_scores();
+
+    assert_eq!(first, second);
+    assert_eq!(first[0].id, id_a);
+    assert_eq!(first[0].centrality, 1.0);
+    assert!(
+        first
+            .iter()
+            .all(|score| score.centrality >= 0.0 && score.centrality <= 1.0)
+    );
+}
+
+#[test]
 fn test_cascade_retrieval_through_tags() {
     let mut graph = MemoryGraph::new();
 

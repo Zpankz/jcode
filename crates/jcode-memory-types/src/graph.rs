@@ -226,6 +226,20 @@ pub struct GraphMetadata {
     pub link_discovery_count: u64,
 }
 
+/// Lightweight deterministic graph analytics for a memory node.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MemoryGraphScore {
+    /// Memory ID.
+    pub id: String,
+    /// Number of incoming plus outgoing graph edges touching this memory.
+    pub degree: usize,
+    /// Traversal-weighted incoming plus outgoing degree.
+    pub weighted_degree: f32,
+    /// Normalized centrality in the current graph, 0.0 for isolated memories and
+    /// 1.0 for the most connected memory in the graph.
+    pub centrality: f32,
+}
+
 /// The memory graph - HashMap-based for clean JSON serialization
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryGraph {
@@ -533,6 +547,66 @@ impl MemoryGraph {
     /// Get total number of edges
     pub fn edge_count(&self) -> usize {
         self.edges.values().map(|v| v.len()).sum()
+    }
+
+    /// Compute deterministic lightweight centrality scores for memory nodes.
+    ///
+    /// This intentionally avoids heavyweight graph dependencies. It is designed
+    /// for prioritizing memory gardening and retrieval tie-breaks, not for exact
+    /// academic PageRank. Scores include both outgoing and incoming edges, using
+    /// edge traversal weights so high-signal semantic/supersession links matter
+    /// more than weak contradiction edges.
+    pub fn memory_graph_scores(&self) -> Vec<MemoryGraphScore> {
+        let mut scores: Vec<MemoryGraphScore> = self
+            .memories
+            .keys()
+            .map(|id| {
+                let outgoing = self.get_edges(id);
+                let outgoing_degree = outgoing.len();
+                let outgoing_weight: f32 = outgoing
+                    .iter()
+                    .map(|edge| edge.kind.traversal_weight())
+                    .sum();
+
+                let mut incoming_degree = 0usize;
+                let mut incoming_weight = 0.0f32;
+                if let Some(sources) = self.reverse_edges.get(id) {
+                    for source in sources {
+                        for edge in self.get_edges(source) {
+                            if edge.target == *id {
+                                incoming_degree += 1;
+                                incoming_weight += edge.kind.traversal_weight();
+                            }
+                        }
+                    }
+                }
+
+                MemoryGraphScore {
+                    id: id.clone(),
+                    degree: outgoing_degree + incoming_degree,
+                    weighted_degree: outgoing_weight + incoming_weight,
+                    centrality: 0.0,
+                }
+            })
+            .collect();
+
+        let max_weight = scores
+            .iter()
+            .map(|score| score.weighted_degree)
+            .fold(0.0f32, f32::max);
+        if max_weight > 0.0 {
+            for score in &mut scores {
+                score.centrality = score.weighted_degree / max_weight;
+            }
+        }
+
+        scores.sort_by(|a, b| {
+            b.centrality
+                .total_cmp(&a.centrality)
+                .then_with(|| b.degree.cmp(&a.degree))
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        scores
     }
 
     // ==================== Cascade Retrieval ====================

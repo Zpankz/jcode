@@ -621,3 +621,82 @@ fn score_and_filter_prioritizes_matching_skill_memories() {
     assert_eq!(ranked[0].0.id, "skill:todo-planning-skill");
     assert!(ranked[0].1 > ranked[1].1);
 }
+
+#[test]
+fn retrieval_cache_records_hits_and_is_keyed_by_graph_mtime() {
+    with_temp_home(|_home| {
+        clear_retrieval_cache_for_tests();
+        let manager = MemoryManager::new().with_project_dir("/tmp/jcode-cache-key-test");
+
+        let key_before = manager
+            .retrieval_cache_key("semantic", "cache query", 0.5, 5, MemoryScope::Project)
+            .expect("cache key before save");
+        let entry = MemoryEntry::new(MemoryCategory::Fact, "cacheable memory");
+        cache_retrieval_results(key_before.clone(), &[(entry.clone(), 0.9)]);
+
+        let cached = cached_retrieval_results(&key_before).expect("cache hit");
+        assert_eq!(cached[0].0.content, "cacheable memory");
+        let stats = retrieval_cache_stats();
+        assert_eq!(stats.inserts, 1);
+        assert_eq!(stats.hits, 1);
+
+        manager
+            .upsert_project_memory(entry)
+            .expect("write project graph");
+        let key_after = manager
+            .retrieval_cache_key("semantic", "cache query", 0.5, 5, MemoryScope::Project)
+            .expect("cache key after save");
+        assert_ne!(
+            key_before, key_after,
+            "graph mtime should invalidate retrieval cache keys"
+        );
+    });
+}
+
+#[test]
+fn garden_dry_run_reports_candidates_without_mutating_graph() {
+    with_temp_home(|_home| {
+        let manager = MemoryManager::new().with_project_dir("/tmp/jcode-garden-test");
+
+        let mut first = MemoryEntry::new(MemoryCategory::Fact, "first duplicate");
+        first.id = "mem:first".to_string();
+        first.embedding = Some(vec![1.0, 0.0, 0.0]);
+
+        let mut second = MemoryEntry::new(MemoryCategory::Fact, "second duplicate");
+        second.id = "mem:second".to_string();
+        second.embedding = Some(vec![1.0, 0.0, 0.0]);
+
+        let mut stale = MemoryEntry::new(MemoryCategory::Fact, "superseded stale memory");
+        stale.id = "mem:stale".to_string();
+        stale.active = false;
+
+        manager.upsert_project_memory(first).expect("upsert first");
+        manager
+            .upsert_project_memory(second)
+            .expect("upsert second");
+        manager.upsert_project_memory(stale).expect("upsert stale");
+
+        let before = manager.load_project_graph().expect("load before");
+        let report = manager.garden_dry_run().expect("garden dry run");
+        let after = manager.load_project_graph().expect("load after");
+
+        assert_eq!(
+            before.edge_count(),
+            after.edge_count(),
+            "dry run must not mutate edges"
+        );
+        assert_eq!(
+            before.memories.len(),
+            after.memories.len(),
+            "dry run must not remove memories"
+        );
+        assert!(report.candidates.iter().any(|candidate| {
+            candidate.kind == GardenCandidateKind::Deduplicate
+                && candidate.primary_id == "mem:first"
+                && candidate.secondary_id.as_deref() == Some("mem:second")
+        }));
+        assert!(report.candidates.iter().any(|candidate| {
+            candidate.kind == GardenCandidateKind::Prune && candidate.primary_id == "mem:stale"
+        }));
+    });
+}
