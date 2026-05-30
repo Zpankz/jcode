@@ -16,6 +16,7 @@ mod glob;
 mod gmail;
 mod goal;
 mod grep;
+pub mod hooks;
 mod integration_support;
 mod invalid;
 mod ls;
