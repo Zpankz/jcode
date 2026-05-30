@@ -223,5 +223,11 @@ memex retro at the end.
   3. Another runs a `jsbash exec` JS/TS snippet to merge/reduce them.
   4. Results are announced via the existing `communicate share` with a pointer key.
 
-- **P6** `context-snr` routing block — pending.
+- **P6** `context-snr` routing block — done. New `context_snr` tool (setup/status)
+  writes a routing block into `~/.jcode/preferred-tools.md` (same mechanism as rtk)
+  preferring token-frugal surfaces: repomix/ai-digest repo digests, ttok exact
+  token counts, ast-grep structural search, plus a built-in `jsbash` repo_digest
+  fallback (tree + head-of-file inside the sandbox, no external CLI). All surveyed
+  CLIs are optional and detected on PATH; status reports which are present. 4 tests
+  (markers, ast-grep/sg dedupe, status never-fails, setup idempotent).
 
