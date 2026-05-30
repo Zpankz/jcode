@@ -103,6 +103,7 @@ pub struct Registry {
     tools: Arc<RwLock<HashMap<String, Arc<dyn Tool>>>>,
     skills: Arc<RwLock<SkillRegistry>>,
     compaction: Arc<RwLock<CompactionManager>>,
+    hooks: Arc<hooks::HookRegistry>,
 }
 
 impl Clone for Registry {
@@ -113,6 +114,7 @@ impl Clone for Registry {
             // Each clone gets a fresh CompactionManager to prevent parallel
             // subagents from corrupting each other's message history
             compaction: Arc::new(RwLock::new(CompactionManager::new())),
+            hooks: self.hooks.clone(),
         }
     }
 }
@@ -120,6 +122,23 @@ impl Clone for Registry {
 impl Registry {
     fn shared_skills_registry() -> Arc<RwLock<SkillRegistry>> {
         SkillRegistry::shared_registry()
+    }
+
+    /// Shared hook registry, built once per process. Native hooks are
+    /// registered first (currently none until P3); then `~/.jcode/hooks.json`
+    /// command hooks are appended. Loading is fail-open: a missing or invalid
+    /// config never blocks tool execution.
+    fn shared_hooks() -> Arc<hooks::HookRegistry> {
+        use std::sync::OnceLock;
+        static HOOKS: OnceLock<Arc<hooks::HookRegistry>> = OnceLock::new();
+        HOOKS
+            .get_or_init(|| {
+                let mut registry = hooks::HookRegistry::new();
+                // Native hooks (e.g. RtkRewriteHook) are registered here in P3.
+                registry.load_global_command_hooks();
+                Arc::new(registry)
+            })
+            .clone()
     }
 
     fn insert_tool<T>(tools: &mut HashMap<String, Arc<dyn Tool>>, name: &str, tool: T)
@@ -149,6 +168,18 @@ impl Registry {
             tools: Arc::new(RwLock::new(HashMap::new())),
             skills: Arc::new(RwLock::new(SkillRegistry::default())),
             compaction: Arc::new(RwLock::new(CompactionManager::new())),
+            hooks: Self::shared_hooks(),
+        }
+    }
+
+    /// Construct an empty registry with a custom hook registry, for tests.
+    #[cfg(test)]
+    pub(crate) fn empty_with_hooks(hooks: hooks::HookRegistry) -> Self {
+        Self {
+            tools: Arc::new(RwLock::new(HashMap::new())),
+            skills: Arc::new(RwLock::new(SkillRegistry::default())),
+            compaction: Arc::new(RwLock::new(CompactionManager::new())),
+            hooks: Arc::new(hooks),
         }
     }
 
@@ -283,6 +314,7 @@ impl Registry {
             tools: Arc::new(RwLock::new(HashMap::new())),
             skills: skills.clone(),
             compaction: compaction.clone(),
+            hooks: Self::shared_hooks(),
         };
         let registry_struct_ms = registry_struct_start.elapsed().as_millis();
 
@@ -500,6 +532,28 @@ impl Registry {
         // Drop the lock before executing
         drop(tools);
 
+        // PreToolUse hooks: may rewrite the input or deny the call entirely.
+        // Empty registry short-circuits with zero overhead.
+        let mut input = input;
+        if !self.hooks.is_empty() {
+            match self.hooks.run_pre(resolved_name, input.clone(), &ctx).await {
+                hooks::PreOutcome::Proceed { input: rewritten } => {
+                    input = rewritten;
+                }
+                hooks::PreOutcome::Deny { reason } => {
+                    let mut fields =
+                        Self::tool_lifecycle_fields("denied", name, resolved_name, &input, &ctx);
+                    fields.push(("reason".to_string(), reason.clone()));
+                    crate::logging::event_warn("TOOL_LIFECYCLE", fields);
+                    return Err(anyhow::anyhow!(
+                        "Tool '{}' blocked by hook: {}",
+                        name,
+                        reason
+                    ));
+                }
+            }
+        }
+
         crate::logging::event_info(
             "TOOL_LIFECYCLE",
             Self::tool_lifecycle_fields("start", name, resolved_name, &input, &ctx),
@@ -522,6 +576,15 @@ impl Registry {
                 return Err(error);
             }
         };
+
+        // PostToolUse hooks: may rewrite/compress/filter the output. Runs before
+        // the built-in context-overflow guard so hooks operate on the raw output.
+        if !self.hooks.is_empty() {
+            output = self
+                .hooks
+                .run_post(resolved_name, &input, output, &ctx)
+                .await;
+        }
 
         // Context overflow guard: check if this output would push us over the limit
         output = self.guard_context_overflow(name, output).await;

@@ -373,6 +373,7 @@ async fn test_context_guard_small_output_passes_through() {
         tools: Arc::new(RwLock::new(HashMap::new())),
         skills: Arc::new(RwLock::new(crate::skill::SkillRegistry::default())),
         compaction,
+        hooks: Registry::shared_hooks(),
     };
 
     let output = ToolOutput::new("small output");
@@ -387,6 +388,7 @@ async fn test_context_guard_truncates_huge_single_output() {
         tools: Arc::new(RwLock::new(HashMap::new())),
         skills: Arc::new(RwLock::new(crate::skill::SkillRegistry::default())),
         compaction,
+        hooks: Registry::shared_hooks(),
     };
 
     // 30% of 1000 = 300 tokens = 1200 chars max for a single output
@@ -415,6 +417,7 @@ async fn test_context_guard_truncates_when_context_nearly_full() {
         tools: Arc::new(RwLock::new(HashMap::new())),
         skills: Arc::new(RwLock::new(crate::skill::SkillRegistry::default())),
         compaction,
+        hooks: Registry::shared_hooks(),
     };
 
     // Even a modest output should get truncated when context is 95% full
@@ -433,6 +436,7 @@ async fn test_context_guard_zero_budget_passes_through() {
         tools: Arc::new(RwLock::new(HashMap::new())),
         skills: Arc::new(RwLock::new(crate::skill::SkillRegistry::default())),
         compaction,
+        hooks: Registry::shared_hooks(),
     };
 
     let output = ToolOutput::new("x".repeat(100_000));
@@ -461,4 +465,177 @@ async fn test_request_permission_is_ambient_only() {
         defs_after.iter().any(|d| d.name == "request_permission"),
         "request_permission should be available after ambient tool registration"
     );
+}
+
+// ---------------------------------------------------------------------------
+// P2: hook layer wired into Registry::execute
+// ---------------------------------------------------------------------------
+
+use crate::tool::hooks::{
+    Hook, HookRegistry, PostToolUseDecision, PostToolUseInput, PreToolUseDecision, PreToolUseInput,
+};
+
+/// Mock tool that echoes its `command` arg back as output.
+struct EchoTool;
+
+#[async_trait]
+impl Tool for EchoTool {
+    fn name(&self) -> &str {
+        "echo"
+    }
+    fn description(&self) -> &str {
+        "echo command back"
+    }
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}})
+    }
+    async fn execute(&self, input: Value, _ctx: ToolContext) -> Result<ToolOutput> {
+        let cmd = input
+            .get("command")
+            .and_then(|c| c.as_str())
+            .unwrap_or("")
+            .to_string();
+        Ok(ToolOutput::new(cmd))
+    }
+}
+
+struct DenyHook;
+#[async_trait]
+impl Hook for DenyHook {
+    fn name(&self) -> &str {
+        "test-deny"
+    }
+    fn matches(&self, t: &str) -> bool {
+        t == "echo"
+    }
+    async fn pre(&self, _: PreToolUseInput<'_>) -> anyhow::Result<PreToolUseDecision> {
+        Ok(PreToolUseDecision::Deny {
+            reason: "policy".into(),
+        })
+    }
+}
+
+struct RewriteInputHook;
+#[async_trait]
+impl Hook for RewriteInputHook {
+    fn name(&self) -> &str {
+        "test-rewrite-input"
+    }
+    fn matches(&self, t: &str) -> bool {
+        t == "echo"
+    }
+    async fn pre(&self, _: PreToolUseInput<'_>) -> anyhow::Result<PreToolUseDecision> {
+        Ok(PreToolUseDecision::RewriteInput(
+            serde_json::json!({"command": "rewritten"}),
+        ))
+    }
+}
+
+struct RewriteOutputHook;
+#[async_trait]
+impl Hook for RewriteOutputHook {
+    fn name(&self) -> &str {
+        "test-rewrite-output"
+    }
+    fn matches(&self, t: &str) -> bool {
+        t == "echo"
+    }
+    async fn post(&self, _: PostToolUseInput<'_>) -> anyhow::Result<PostToolUseDecision> {
+        Ok(PostToolUseDecision::RewriteOutput(ToolOutput::new(
+            "post-filtered",
+        )))
+    }
+}
+
+fn hook_test_ctx() -> ToolContext {
+    ToolContext {
+        session_id: "hook-test".to_string(),
+        message_id: "m".to_string(),
+        tool_call_id: "c".to_string(),
+        working_dir: None,
+        stdin_request_tx: None,
+        graceful_shutdown_signal: None,
+        execution_mode: ToolExecutionMode::Direct,
+    }
+}
+
+#[tokio::test]
+async fn execute_pre_hook_deny_blocks_tool() {
+    let mut hooks = HookRegistry::new();
+    hooks.register_native(Arc::new(DenyHook));
+    let registry = Registry::empty_with_hooks(hooks);
+    registry
+        .register("echo".to_string(), Arc::new(EchoTool) as Arc<dyn Tool>)
+        .await;
+
+    let result = registry
+        .execute(
+            "echo",
+            serde_json::json!({"command": "original"}),
+            hook_test_ctx(),
+        )
+        .await;
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains("blocked by hook"), "got: {msg}");
+    assert!(msg.contains("policy"), "got: {msg}");
+}
+
+#[tokio::test]
+async fn execute_pre_hook_rewrites_input() {
+    let mut hooks = HookRegistry::new();
+    hooks.register_native(Arc::new(RewriteInputHook));
+    let registry = Registry::empty_with_hooks(hooks);
+    registry
+        .register("echo".to_string(), Arc::new(EchoTool) as Arc<dyn Tool>)
+        .await;
+
+    let out = registry
+        .execute(
+            "echo",
+            serde_json::json!({"command": "original"}),
+            hook_test_ctx(),
+        )
+        .await
+        .unwrap();
+    // EchoTool echoes the (rewritten) command.
+    assert_eq!(out.output, "rewritten");
+}
+
+#[tokio::test]
+async fn execute_post_hook_rewrites_output() {
+    let mut hooks = HookRegistry::new();
+    hooks.register_native(Arc::new(RewriteOutputHook));
+    let registry = Registry::empty_with_hooks(hooks);
+    registry
+        .register("echo".to_string(), Arc::new(EchoTool) as Arc<dyn Tool>)
+        .await;
+
+    let out = registry
+        .execute(
+            "echo",
+            serde_json::json!({"command": "original"}),
+            hook_test_ctx(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(out.output, "post-filtered");
+}
+
+#[tokio::test]
+async fn execute_with_no_hooks_passes_through() {
+    let registry = Registry::empty_with_hooks(HookRegistry::new());
+    registry
+        .register("echo".to_string(), Arc::new(EchoTool) as Arc<dyn Tool>)
+        .await;
+
+    let out = registry
+        .execute(
+            "echo",
+            serde_json::json!({"command": "verbatim"}),
+            hook_test_ctx(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(out.output, "verbatim");
 }
