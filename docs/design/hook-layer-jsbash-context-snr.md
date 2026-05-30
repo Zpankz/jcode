@@ -201,3 +201,27 @@ P6. `context-snr` routing block (repomix/ttok/ast-grep) via integration_support 
 
 Each phase: scoped commit, adversarial tests, background validation script,
 memex retro at the end.
+
+## Status / progress
+
+- **P1** hook core — done (`90f87573`).
+- **P2** wire into `Registry::execute` — done (`6c6ddef8`).
+- **P3** `RtkRewriteHook` — done (`e06bf9a2`).
+- **P4** `jsbash` tool + Node sidecar — done (`7e2e6983`). 9 tests; live roundtrip
+  (echo|tr, QuickJS, write/read persistence) verified against a real sidecar.
+- **P5** swarm shared sandbox — done. The `jsbash` tool's `swarm` parameter selects
+  a shared `ReadWriteFs` rooted at `~/.jcode/jsbash/swarm-<sanitized-key>/`. Members
+  passing the same `swarm` key (regardless of `session_id`) share one on-disk
+  sandbox; sessions without a `swarm` key stay isolated (in-memory/overlay).
+  Verified by `live_swarm_sandbox_is_shared_across_sessions`: session A writes
+  `shared.txt`, a *different* session B with the same key reads it back, and a
+  non-swarm session cannot see it.
+
+  Swarm orchestration recipe (no new `communicate` op needed):
+  1. Each member calls `jsbash exec`/`write_file` with `swarm: "<id>"`.
+  2. One member writes `plan.json` / partial results into the shared sandbox.
+  3. Another runs a `jsbash exec` JS/TS snippet to merge/reduce them.
+  4. Results are announced via the existing `communicate share` with a pointer key.
+
+- **P6** `context-snr` routing block — pending.
+

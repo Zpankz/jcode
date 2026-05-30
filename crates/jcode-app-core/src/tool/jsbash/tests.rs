@@ -200,3 +200,63 @@ async fn live_exec_and_fs_roundtrip() {
         std::env::remove_var("JCODE_HOME");
     }
 }
+
+/// P5: two *different sessions* sharing the same `swarm` key see each other's
+/// files (shared ReadWriteFs on disk). Ignored: spawns Node.
+///   cargo test -p jcode-app-core jsbash::tests::live_ -- --ignored --nocapture
+#[tokio::test]
+#[ignore]
+async fn live_swarm_sandbox_is_shared_across_sessions() {
+    let _guard = crate::storage::lock_test_env();
+    let tmp = tempfile::tempdir().unwrap();
+    unsafe {
+        std::env::set_var("JCODE_HOME", tmp.path());
+    }
+    let tool = JsBashTool::new();
+    tool.execute(json!({"action": "setup"}), ctx_with("a", None))
+        .await
+        .unwrap();
+
+    // Session "a" writes a file into the shared swarm sandbox.
+    tool.execute(
+        json!({
+            "action": "write_file",
+            "path": "shared.txt",
+            "content": "from-a",
+            "swarm": "team1"
+        }),
+        ctx_with("a", None),
+    )
+    .await
+    .unwrap();
+
+    // A DIFFERENT session "b", same swarm key, reads it back.
+    let read = tool
+        .execute(
+            json!({"action": "read_file", "path": "shared.txt", "swarm": "team1"}),
+            ctx_with("b", None),
+        )
+        .await
+        .unwrap();
+    assert!(
+        read.output.contains("from-a"),
+        "swarm read: {}",
+        read.output
+    );
+
+    // Session "b" without the swarm key must NOT see it (isolated in-memory fs).
+    let isolated = tool
+        .execute(
+            json!({"action": "read_file", "path": "shared.txt"}),
+            ctx_with("b", None),
+        )
+        .await;
+    assert!(
+        isolated.is_err() || !isolated.unwrap().output.contains("from-a"),
+        "non-swarm session must not see swarm files"
+    );
+
+    unsafe {
+        std::env::remove_var("JCODE_HOME");
+    }
+}
