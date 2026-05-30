@@ -862,16 +862,6 @@ pub(super) fn gather_memory_info(memory_enabled: bool) -> Option<MemoryInfo> {
     }
 
     let activity = crate::memory::get_activity();
-    let sidecar_model = if crate::memory::memory_sidecar_enabled() {
-        let sidecar = crate::sidecar::Sidecar::new();
-        Some(format!(
-            "{} · {}",
-            sidecar.backend_name(),
-            sidecar.model_name()
-        ))
-    } else {
-        None
-    };
 
     if let Ok(mut guard) = CACHE.lock() {
         if let Some((ts, cached, refreshing)) = guard.as_mut() {
@@ -879,12 +869,11 @@ pub(super) fn gather_memory_info(memory_enabled: bool) -> Option<MemoryInfo> {
                 return match cached.clone() {
                     Some(mut info) => {
                         info.activity = activity.clone();
-                        info.sidecar_model = sidecar_model.clone();
                         Some(info)
                     }
                     None => activity.clone().map(|activity| MemoryInfo {
                         sidecar_available: crate::memory::memory_sidecar_enabled(),
-                        sidecar_model: sidecar_model.clone(),
+                        sidecar_model: None,
                         activity: Some(activity),
                         ..Default::default()
                     }),
@@ -893,12 +882,11 @@ pub(super) fn gather_memory_info(memory_enabled: bool) -> Option<MemoryInfo> {
             let stale = match cached.clone() {
                 Some(mut info) => {
                     info.activity = activity.clone();
-                    info.sidecar_model = sidecar_model.clone();
                     Some(info)
                 }
                 None => activity.clone().map(|activity| MemoryInfo {
                     sidecar_available: crate::memory::memory_sidecar_enabled(),
-                    sidecar_model: sidecar_model.clone(),
+                    sidecar_model: None,
                     activity: Some(activity),
                     ..Default::default()
                 }),
@@ -924,7 +912,7 @@ pub(super) fn gather_memory_info(memory_enabled: bool) -> Option<MemoryInfo> {
 
     activity.map(|activity| MemoryInfo {
         sidecar_available: crate::memory::memory_sidecar_enabled(),
-        sidecar_model,
+        sidecar_model: None,
         activity: Some(activity),
         ..Default::default()
     })

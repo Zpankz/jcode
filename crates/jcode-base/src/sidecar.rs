@@ -11,6 +11,8 @@ use crate::auth;
 use anyhow::{Context, Result};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
 
 /// Fast/cheap OpenAI model used when Codex credentials are available.
 pub const SIDECAR_OPENAI_MODEL: &str = "gpt-5.3-codex-spark";
@@ -19,6 +21,22 @@ const SIDECAR_OPENAI_OAUTH_FALLBACK_REASONING: &str = "low";
 
 /// Fast/cheap Claude model used when only Claude credentials are available.
 const SIDECAR_CLAUDE_MODEL: &str = "claude-haiku-4-5-20241022";
+
+fn warn_unsupported_configured_model_once(model: &str) {
+    static WARNED_MODELS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    let warned = WARNED_MODELS.get_or_init(|| Mutex::new(HashSet::new()));
+    let should_warn = warned
+        .lock()
+        .map(|mut models| models.insert(model.to_string()))
+        .unwrap_or(true);
+
+    if should_warn {
+        crate::logging::warn(&format!(
+            "Ignoring unsupported memory sidecar model override '{}'; expected an OpenAI or Claude model",
+            model
+        ));
+    }
+}
 
 /// OpenAI Responses API
 const OPENAI_API_BASE: &str = "https://api.openai.com/v1";
@@ -72,10 +90,7 @@ impl Sidecar {
                 Some("openai") => (SidecarBackend::OpenAI, model),
                 Some("claude") => (SidecarBackend::Claude, model),
                 _ => {
-                    crate::logging::warn(&format!(
-                        "Ignoring unsupported memory sidecar model override '{}'; expected an OpenAI or Claude model",
-                        model
-                    ));
+                    warn_unsupported_configured_model_once(&model);
                     if auth::codex::load_credentials().is_ok() {
                         (SidecarBackend::OpenAI, SIDECAR_OPENAI_MODEL.to_string())
                     } else {
