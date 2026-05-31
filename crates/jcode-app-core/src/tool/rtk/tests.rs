@@ -74,6 +74,8 @@ fn setup_writes_routing_block_and_manifest() {
 
 #[test]
 fn detect_rtk_finds_binary_on_path() {
+    // Serialize with other tests that mutate the global PATH env.
+    let _lock = crate::storage::lock_test_env();
     let bin_dir = tempfile::tempdir().expect("bin dir");
     let exe = if cfg!(windows) { "rtk.exe" } else { "rtk" };
     let exe_path = bin_dir.path().join(exe);
@@ -125,6 +127,7 @@ async fn rtk_tool_status_reports_missing_setup() {
 
 #[tokio::test]
 async fn rtk_tool_check_reports_absence() {
+    let _lock = crate::storage::lock_test_env();
     let empty = tempfile::tempdir().expect("empty path dir");
     let _path = EnvGuard::set_value("PATH", empty.path().to_string_lossy().as_ref());
     let tool = RtkTool::new();
